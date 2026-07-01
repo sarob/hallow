@@ -13,8 +13,8 @@ Inspired by [fallow](https://github.com/fallow-rs/fallow) (JS/TS), adapted for P
 | **Phase 1** | Foundation + Dead Code | **Complete** |
 | **Phase 2** | Complexity + Health + Duplication | **Complete** |
 | **Phase 3** | Boundaries + Plugins + Fix | **Complete** |
-| **Phase 4** | Output Formats + Audit + CI | In progress |
-| Phase 5 | Security + MCP + Polish | Planned |
+| **Phase 4** | Output Formats + Audit + CI | **Complete** |
+| **Phase 5** | Security + MCP + Polish | In progress |
 
 ## Install
 
@@ -157,14 +157,17 @@ Nine modules mirroring Fallow's crate structure:
 
 **Output formats**
 - Human (Rich ANSI), JSON, compact
-- SARIF, Markdown, CodeClimate, GitHub annotations *(planned)*
+- SARIF v2.1.0 (GitHub code scanning, VS Code)
+- Markdown (PR comments and reports)
+- CodeClimate JSON (GitLab Code Quality)
+- GitHub Actions annotations (`::error`/`::warning`)
 
-**CI integration** *(planned)*
-- GitHub Action
-- Pre-commit hook
+**CI integration**
+- GitHub Action workflow definition
+- Pre-commit hook configuration
 - `--ci` exit code gating
-- PR-scoped audit with `--changed-since`
-- Baseline files for regression prevention
+- PR-scoped audit with `hallow audit --changed-since`
+- Baseline files (`--save-baseline` / `--baseline`) for regression prevention
 
 **MCP server** *(planned)*
 - 12+ tools: analyze, audit, dupes, health, security, explain, fix, impact
