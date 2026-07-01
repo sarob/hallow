@@ -250,6 +250,66 @@ def fix(
     _run_fix(root=root, config_path=config, dry_run=dry_run)
 
 
+@app.command()
+def audit(
+    root: Path | None = typer.Option(
+        None,
+        "--root",
+        "-r",
+        help="Project root directory",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file path",
+    ),
+    changed_since: str = typer.Option(
+        "origin/main",
+        "--changed-since",
+        help="Git ref to diff against (default: origin/main)",
+    ),
+    format: str = typer.Option(
+        "human",
+        "--format",
+        "-f",
+        help="Output format: human, json, sarif, markdown, codeclimate, github, compact",
+    ),
+    output_file: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write output to file",
+    ),
+    ci: bool = typer.Option(
+        False,
+        "--ci",
+        help="CI mode — exit 1 on any error-level issue",
+    ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Baseline file — only report findings not in baseline",
+    ),
+    save_baseline: Path | None = typer.Option(
+        None,
+        "--save-baseline",
+        help="Save current findings as a new baseline file",
+    ),
+) -> None:
+    """PR-scoped audit — only flag issues in changed files."""
+    _run_audit(
+        root=root,
+        config_path=config,
+        changed_since=changed_since,
+        fmt=format,
+        output_file=output_file,
+        ci=ci,
+        baseline_path=baseline,
+        save_baseline_path=save_baseline,
+    )
+
+
 def _run_check(
     root: Path | None,
     config_path: Path | None,
@@ -260,7 +320,6 @@ def _run_check(
 ) -> None:
     from hallow.config import load_config
     from hallow.core import analyze
-    from hallow.output import format_results
 
     overrides: dict = {}
     if ci:
@@ -276,14 +335,56 @@ def _run_check(
     )
     results = analyze(cfg)
 
-    cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
-    with cm as fh:
-        output = format_results(results, fmt=fmt, file=fh)
-        if fmt == "json" and not fh:
-            typer.echo(output)
+    _emit_results(results, fmt, output_file)
 
     if ci and results.errors > 0:
         raise typer.Exit(code=1)
+
+
+def _run_audit(
+    root: Path | None,
+    config_path: Path | None,
+    changed_since: str,
+    fmt: str,
+    output_file: Path | None,
+    ci: bool,
+    baseline_path: Path | None,
+    save_baseline_path: Path | None,
+) -> None:
+    from hallow.config import load_config
+    from hallow.core import analyze
+    from hallow.core.baseline import filter_baseline, save_baseline
+
+    overrides: dict = {"changed_since": changed_since}
+    if ci:
+        overrides["ci"] = True
+        overrides["fail_on_issues"] = True
+
+    cfg = load_config(root=root, config_path=config_path, overrides=overrides)
+    results = analyze(cfg)
+
+    if save_baseline_path:
+        count = save_baseline(results, save_baseline_path)
+        typer.echo(f"Saved baseline with {count} finding(s) to {save_baseline_path}")
+
+    if baseline_path:
+        results = filter_baseline(results, baseline_path)
+
+    _emit_results(results, fmt, output_file)
+
+    if ci and results.errors > 0:
+        raise typer.Exit(code=1)
+
+
+def _emit_results(results, fmt: str, output_file: Path | None) -> None:
+    from hallow.output import format_results
+
+    text_formats = {"json", "sarif", "markdown", "codeclimate", "github"}
+    cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
+    with cm as fh:
+        output = format_results(results, fmt=fmt, file=fh)
+        if fmt in text_formats and not fh and output:
+            typer.echo(output)
 
 
 def _run_health(

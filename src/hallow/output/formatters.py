@@ -24,10 +24,19 @@ def format_results(results: AnalysisResults, fmt: str = "human", file: Any = Non
 
 
 def get_formatter(fmt: str):  # noqa: ANN201
+    from hallow.output.codeclimate import format_codeclimate
+    from hallow.output.github import format_github
+    from hallow.output.markdown import format_markdown
+    from hallow.output.sarif import format_sarif
+
     formatters = {
         "human": format_human,
         "json": format_json,
         "compact": format_compact,
+        "sarif": format_sarif,
+        "markdown": format_markdown,
+        "codeclimate": format_codeclimate,
+        "github": format_github,
     }
     if fmt not in formatters:
         raise ValueError(f"Unknown format: {fmt}. Available: {', '.join(formatters)}")

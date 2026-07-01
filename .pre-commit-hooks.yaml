@@ -1,0 +1,7 @@
+- id: hallow
+  name: hallow
+  description: Deterministic codebase intelligence for Python
+  entry: hallow check --ci
+  language: python
+  types: [python]
+  require_serial: true
