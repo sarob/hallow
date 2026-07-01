@@ -225,11 +225,19 @@ def _find_clones(
 
     raw_clones.sort(key=lambda x: -x[1])
 
-    used: set[tuple[str, int]] = set()
+    # Largest clones are processed first and claim their line ranges. A single
+    # clone region surfaces once per starting offset (offsets 0, 1, 2, ... each
+    # form a distinct hash bucket), so without collapsing we would emit the same
+    # region many times shifted by a line. Track claimed intervals per file and
+    # skip any fragment that overlaps one already claimed — this collapses the
+    # shifted duplicates while preserving genuinely distinct, non-overlapping
+    # clones in the same file.
+    used_intervals: dict[str, list[tuple[int, int]]] = defaultdict(list)
     groups: list[DuplicateGroup] = []
 
     for positions, length in raw_clones:
         fragments: list[DuplicateFragment] = []
+        claimed: list[tuple[str, int, int]] = []
         for pos in positions:
             file = tokens[pos].file
             start_line = tokens[pos].line
@@ -237,14 +245,14 @@ def _find_clones(
             end_line = tokens[end_pos].line
             line_count = end_line - start_line + 1
 
-            key = (file, start_line)
-            if key in used:
-                continue
-
             if line_count < min_lines:
                 continue
 
-            used.add(key)
+            prior = used_intervals[file] + [(s, e) for f, s, e in claimed if f == file]
+            if _overlaps(prior, start_line, end_line):
+                continue
+
+            claimed.append((file, start_line, end_line))
             fragments.append(
                 DuplicateFragment(
                     file=file,
@@ -255,6 +263,8 @@ def _find_clones(
             )
 
         if len(fragments) >= min_occurrences:
+            for file, start_line, end_line in claimed:
+                used_intervals[file].append((start_line, end_line))
             line_count = max(f.lines_of_code for f in fragments)
             groups.append(
                 DuplicateGroup(
@@ -265,6 +275,10 @@ def _find_clones(
             )
 
     return groups
+
+
+def _overlaps(intervals: list[tuple[int, int]], start: int, end: int) -> bool:
+    return any(start <= e and s <= end for s, e in intervals)
 
 
 def _hash_window(tokens: list[_Token], start: int, length: int) -> int:
