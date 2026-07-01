@@ -226,6 +226,30 @@ def dupes(
     )
 
 
+@app.command()
+def fix(
+    root: Path | None = typer.Option(
+        None,
+        "--root",
+        "-r",
+        help="Project root directory",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file path",
+    ),
+    dry_run: bool = typer.Option(
+        True,
+        "--dry-run/--apply",
+        help="Preview changes without applying (default: dry run)",
+    ),
+) -> None:
+    """Auto-fix unused imports, dead files, and unused dependencies."""
+    _run_fix(root=root, config_path=config, dry_run=dry_run)
+
+
 def _run_check(
     root: Path | None,
     config_path: Path | None,
@@ -322,6 +346,55 @@ def _run_dupes(
     cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
     with cm as fh:
         format_dupes(groups, fmt=fmt, file=fh)
+
+
+def _run_fix(
+    root: Path | None,
+    config_path: Path | None,
+    dry_run: bool,
+) -> None:
+    from rich.console import Console
+
+    from hallow.config import load_config
+    from hallow.core import analyze
+    from hallow.core.fixer import apply_fixes
+
+    console = Console(highlight=False)
+
+    cfg = load_config(root=root, config_path=config_path)
+    results = analyze(cfg)
+    fix_result = apply_fixes(results, cfg.root.resolve(), dry_run=dry_run)
+
+    if fix_result.total == 0:
+        console.print()
+        console.print("[bold green]Nothing to fix.[/bold green]")
+        console.print()
+        return
+
+    prefix = "Would" if dry_run else "Did"
+    console.print()
+
+    if fix_result.removed_imports:
+        console.print(f"  {prefix} remove: {len(fix_result.removed_imports)} unused import(s)")
+        for desc in fix_result.removed_imports[:10]:
+            console.print(f"    - {desc}")
+        if len(fix_result.removed_imports) > 10:
+            console.print(f"    ... and {len(fix_result.removed_imports) - 10} more")
+
+    if fix_result.deleted_files:
+        console.print(f"  {prefix} delete: {len(fix_result.deleted_files)} dead file(s)")
+        for f in fix_result.deleted_files:
+            console.print(f"    - {f}")
+
+    if fix_result.removed_deps:
+        console.print(f"  {prefix} remove: {len(fix_result.removed_deps)} unused dep(s)")
+        for d in fix_result.removed_deps:
+            console.print(f"    - {d}")
+
+    console.print()
+    if dry_run:
+        console.print("  [dim]Run with --apply to make changes.[/dim]")
+        console.print()
 
 
 if __name__ == "__main__":

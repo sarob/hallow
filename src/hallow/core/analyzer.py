@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from hallow.config.loader import HallowConfig
+from hallow.core.boundaries import detect_boundary_violations
 from hallow.core.detectors import (
     detect_circular_imports,
     detect_unlisted_dependencies,
@@ -16,6 +17,7 @@ from hallow.core.duplicates import detect_duplicates
 from hallow.core.health import compute_project_health, detect_high_complexity
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
+from hallow.plugins import load_plugins
 from hallow.types import AnalysisResults
 
 
@@ -31,6 +33,7 @@ def analyze(config: HallowConfig) -> AnalysisResults:
         return AnalysisResults(total_files_scanned=len(files))
 
     graph = ModuleGraph(modules, root)
+    plugins = load_plugins(root)
 
     findings = []
     findings.extend(detect_unused_files(graph, config))
@@ -44,14 +47,17 @@ def analyze(config: HallowConfig) -> AnalysisResults:
     findings.extend(cycle_findings)
 
     findings.extend(detect_high_complexity(modules, config))
+    findings.extend(detect_boundary_violations(graph, config))
 
     duplicates, dupe_findings = detect_duplicates(files, root, config)
     findings.extend(dupe_findings)
 
+    filtered = _apply_plugin_suppressions(findings, plugins)
+
     health = compute_project_health(modules, config)
 
     results = AnalysisResults(
-        findings=findings,
+        findings=filtered,
         cycles=cycles,
         duplicates=duplicates,
         health=health,
@@ -61,3 +67,18 @@ def analyze(config: HallowConfig) -> AnalysisResults:
     results.sort()
 
     return results
+
+
+def _apply_plugin_suppressions(
+    findings: list,
+    plugins,
+) -> list:
+    if not plugins.plugins:
+        return findings
+
+    result = []
+    for f in findings:
+        suppressed = plugins.suppressed_rules(f.location.file)
+        if f.rule.value not in suppressed:
+            result.append(f)
+    return result
