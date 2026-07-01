@@ -6,8 +6,16 @@ import json
 from typing import Any
 
 from rich.console import Console
+from rich.table import Table
 
-from hallow.types import AnalysisResults, Finding, Severity
+from hallow.types import (
+    AnalysisResults,
+    DuplicateGroup,
+    FileHealth,
+    Finding,
+    ProjectHealth,
+    Severity,
+)
 
 
 def format_results(results: AnalysisResults, fmt: str = "human", file: Any = None) -> str | None:
@@ -49,6 +57,8 @@ def format_human(results: AnalysisResults, file: Any = None) -> None:
         console.print()
         console.print("[bold green]No issues found.[/bold green]", highlight=False)
         console.print(f"  Scanned {results.total_files_scanned} files", style="dim")
+        if results.health:
+            _print_health_summary(console, results.health)
         console.print()
         return
 
@@ -76,9 +86,24 @@ def format_human(results: AnalysisResults, file: Any = None) -> None:
     if results.cycles:
         console.print("[bold]Circular imports:[/bold]")
         for cycle in results.cycles:
-            chain = " → ".join(cycle.modules + [cycle.modules[0]])
-            console.print(f"  [red]↻[/red] {chain}")
+            chain = " -> ".join(cycle.modules + [cycle.modules[0]])
+            console.print(f"  [red]<>[/red] {chain}")
         console.print()
+
+    if results.duplicates:
+        console.print(f"[bold]Duplicate code:[/bold] {len(results.duplicates)} group(s)")
+        for group in results.duplicates[:5]:
+            locs = ", ".join(f"{f.file}:{f.start_line}" for f in group.fragments)
+            console.print(
+                f"  [yellow]D[/yellow] {group.token_count} tokens, "
+                f"{group.line_count} lines — {locs}"
+            )
+        if len(results.duplicates) > 5:
+            console.print(f"  ... and {len(results.duplicates) - 5} more")
+        console.print()
+
+    if results.health:
+        _print_health_summary(console, results.health)
 
     summary_parts = []
     if results.errors:
@@ -97,6 +122,22 @@ def format_human(results: AnalysisResults, file: Any = None) -> None:
         highlight=False,
     )
     console.print()
+
+
+def _print_health_summary(console: Console, health: ProjectHealth) -> None:
+    grade_color = {
+        "A": "green",
+        "B": "blue",
+        "C": "yellow",
+        "D": "red",
+        "F": "bold red",
+    }.get(health.grade, "white")
+
+    console.print(
+        f"  Health: [{grade_color}]{health.score}/100 ({health.grade})[/{grade_color}]"
+        f"  Complexity hotspots: {len(health.hotspots)}"
+        f"  Maintainability: {health.maintainability_avg} avg"
+    )
 
 
 def format_json(results: AnalysisResults, file: Any = None) -> str:
@@ -119,5 +160,128 @@ def format_compact(results: AnalysisResults, file: Any = None) -> None:
         )
 
     for cycle in results.cycles:
-        chain = " → ".join(cycle.modules)
+        chain = " -> ".join(cycle.modules)
         console.print(f"circular-dependencies: {chain}")
+
+
+def format_health(
+    project: ProjectHealth,
+    file_healths: list[FileHealth],
+    fmt: str = "human",
+    score_only: bool = False,
+    file: Any = None,
+) -> None:
+    if fmt == "json":
+        output = {
+            "project": project.model_dump(mode="json"),
+            "files": [fh.model_dump(mode="json") for fh in file_healths],
+        }
+        text = json.dumps(output, indent=2)
+        if file:
+            file.write(text)
+        else:
+            print(text)  # noqa: T201
+        return
+
+    console = Console(file=file, highlight=False)
+
+    grade_color = {
+        "A": "green",
+        "B": "blue",
+        "C": "yellow",
+        "D": "red",
+        "F": "bold red",
+    }.get(project.grade, "white")
+
+    console.print()
+    console.print(f"  Health: [{grade_color}]{project.score}/100 ({project.grade})[/{grade_color}]")
+    console.print(f"  Complexity hotspots: {len(project.hotspots)}")
+    console.print(f"  Maintainability: {project.maintainability_avg} avg")
+    console.print(
+        f"  Files: {project.total_files}  "
+        f"Functions: {project.total_functions}  "
+        f"Lines: {project.total_lines}"
+    )
+    console.print()
+
+    if score_only:
+        return
+
+    if project.hotspots:
+        console.print("[bold]Complexity hotspots:[/bold]")
+        for fh in project.hotspots:
+            console.print(
+                f"  [yellow]![/yellow] {fh.path}"
+                f"  cc_max={fh.cyclomatic_max}"
+                f"  cog_max={fh.cognitive_max}"
+                f"  MI={fh.maintainability_index}"
+            )
+            for fname in fh.hotspot_functions:
+                console.print(f"    -> {fname}")
+        console.print()
+
+    if file_healths:
+        table = Table(title="File Health", show_lines=False)
+        table.add_column("File", style="bold")
+        table.add_column("LOC", justify="right")
+        table.add_column("CC avg", justify="right")
+        table.add_column("CC max", justify="right")
+        table.add_column("Cog avg", justify="right")
+        table.add_column("MI", justify="right")
+
+        for fh in sorted(file_healths, key=lambda h: h.maintainability_index):
+            mi_style = (
+                "green"
+                if fh.maintainability_index >= 65
+                else ("yellow" if fh.maintainability_index >= 40 else "red")
+            )
+            table.add_row(
+                fh.path,
+                str(fh.lines_of_code),
+                f"{fh.cyclomatic_avg:.1f}",
+                str(fh.cyclomatic_max),
+                f"{fh.cognitive_avg:.1f}",
+                f"[{mi_style}]{fh.maintainability_index:.1f}[/{mi_style}]",
+            )
+
+        console.print(table)
+        console.print()
+
+
+def format_dupes(
+    groups: list[DuplicateGroup],
+    fmt: str = "human",
+    file: Any = None,
+) -> None:
+    if fmt == "json":
+        output = [g.model_dump(mode="json") for g in groups]
+        text = json.dumps(output, indent=2)
+        if file:
+            file.write(text)
+        else:
+            print(text)  # noqa: T201
+        return
+
+    console = Console(file=file, highlight=False)
+
+    if not groups:
+        console.print()
+        console.print("[bold green]No duplicate code found.[/bold green]")
+        console.print()
+        return
+
+    console.print()
+    console.print(f"[bold]Found {len(groups)} duplicate group(s):[/bold]")
+    console.print()
+
+    for i, group in enumerate(groups, 1):
+        console.print(
+            f"  [bold]Group {i}[/bold] — "
+            f"{group.token_count} tokens, {group.line_count} lines, "
+            f"{len(group.fragments)} occurrences"
+        )
+        for frag in group.fragments:
+            console.print(
+                f"    {frag.file}:{frag.start_line}-{frag.end_line} ({frag.lines_of_code} lines)"
+            )
+        console.print()

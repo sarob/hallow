@@ -129,6 +129,103 @@ def check(
     )
 
 
+@app.command()
+def health(
+    root: Path | None = typer.Option(
+        None,
+        "--root",
+        "-r",
+        help="Project root directory",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file path",
+    ),
+    format: str = typer.Option(
+        "human",
+        "--format",
+        "-f",
+        help="Output format: human, json",
+    ),
+    score: bool = typer.Option(
+        False,
+        "--score",
+        help="Show project-level health score summary",
+    ),
+    output_file: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write output to file",
+    ),
+) -> None:
+    """Compute project health score and complexity metrics."""
+    _run_health(
+        root=root,
+        config_path=config,
+        fmt=format,
+        score_only=score,
+        output_file=output_file,
+    )
+
+
+@app.command()
+def dupes(
+    root: Path | None = typer.Option(
+        None,
+        "--root",
+        "-r",
+        help="Project root directory",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file path",
+    ),
+    mode: str = typer.Option(
+        "mild",
+        "--mode",
+        "-m",
+        help="Detection mode: strict, mild, weak, semantic",
+    ),
+    min_tokens: int = typer.Option(
+        50,
+        "--min-tokens",
+        help="Minimum token count for a duplicate group",
+    ),
+    min_lines: int = typer.Option(
+        5,
+        "--min-lines",
+        help="Minimum line count for a duplicate fragment",
+    ),
+    format: str = typer.Option(
+        "human",
+        "--format",
+        "-f",
+        help="Output format: human, json",
+    ),
+    output_file: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write output to file",
+    ),
+) -> None:
+    """Detect duplicate code blocks."""
+    _run_dupes(
+        root=root,
+        config_path=config,
+        mode=mode,
+        min_tokens=min_tokens,
+        min_lines=min_lines,
+        fmt=format,
+        output_file=output_file,
+    )
+
+
 def _run_check(
     root: Path | None,
     config_path: Path | None,
@@ -163,6 +260,68 @@ def _run_check(
 
     if ci and results.errors > 0:
         raise typer.Exit(code=1)
+
+
+def _run_health(
+    root: Path | None,
+    config_path: Path | None,
+    fmt: str,
+    score_only: bool,
+    output_file: Path | None,
+) -> None:
+    from hallow.config import load_config
+    from hallow.core.discovery import discover_python_files
+    from hallow.core.health import compute_file_health, compute_project_health
+    from hallow.extract import extract_modules_parallel
+    from hallow.output.formatters import format_health
+
+    cfg = load_config(root=root, config_path=config_path)
+    root_path = cfg.root.resolve()
+    files = discover_python_files(cfg)
+    modules = extract_modules_parallel(files, root_path)
+
+    project = compute_project_health(modules, cfg)
+    file_healths = [
+        compute_file_health(p, m, cfg)
+        for p, m in sorted(modules.items())
+        if not m.is_test and not m.is_conftest
+    ]
+
+    cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
+    with cm as fh:
+        format_health(project, file_healths, fmt=fmt, score_only=score_only, file=fh)
+
+
+def _run_dupes(
+    root: Path | None,
+    config_path: Path | None,
+    mode: str,
+    min_tokens: int,
+    min_lines: int,
+    fmt: str,
+    output_file: Path | None,
+) -> None:
+    from hallow.config import load_config
+    from hallow.core.discovery import discover_python_files
+    from hallow.core.duplicates import detect_duplicates
+    from hallow.output.formatters import format_dupes
+
+    overrides: dict = {
+        "duplicates": {
+            "mode": mode,
+            "min_tokens": min_tokens,
+            "min_lines": min_lines,
+        }
+    }
+    cfg = load_config(root=root, config_path=config_path, overrides=overrides)
+    root_path = cfg.root.resolve()
+    files = discover_python_files(cfg)
+
+    groups, _ = detect_duplicates(files, root_path, cfg)
+
+    cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
+    with cm as fh:
+        format_dupes(groups, fmt=fmt, file=fh)
 
 
 if __name__ == "__main__":

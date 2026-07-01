@@ -8,9 +8,11 @@ from typing import Any
 from hallow.config import HallowConfig, load_config
 from hallow.core.analyzer import analyze
 from hallow.core.discovery import discover_python_files
+from hallow.core.duplicates import detect_duplicates
+from hallow.core.health import compute_project_health
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
-from hallow.types import AnalysisResults
+from hallow.types import AnalysisResults, ProjectHealth
 
 
 def detect_dead_code(
@@ -67,3 +69,28 @@ def compute_complexity(
             )
 
     return results
+
+
+def compute_health(
+    root: Path | str | None = None,
+    config: HallowConfig | None = None,
+) -> ProjectHealth:
+    cfg = config or load_config(root=Path(root) if root else None)
+    root_path = cfg.root.resolve()
+    files = discover_python_files(cfg)
+    modules = extract_modules_parallel(files, root_path)
+    return compute_project_health(modules, cfg)
+
+
+def find_duplicates(
+    root: Path | str | None = None,
+    config: HallowConfig | None = None,
+    mode: str | None = None,
+) -> list[dict[str, Any]]:
+    cfg = config or load_config(root=Path(root) if root else None)
+    if mode:
+        cfg.duplicates.mode = mode
+    root_path = cfg.root.resolve()
+    files = discover_python_files(cfg)
+    groups, _ = detect_duplicates(files, root_path, cfg)
+    return [g.model_dump(mode="json") for g in groups]

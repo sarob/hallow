@@ -12,6 +12,8 @@ from hallow.core.detectors import (
     detect_unused_imports,
 )
 from hallow.core.discovery import discover_python_files
+from hallow.core.duplicates import detect_duplicates
+from hallow.core.health import compute_project_health, detect_high_complexity
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
 from hallow.types import AnalysisResults
@@ -41,9 +43,18 @@ def analyze(config: HallowConfig) -> AnalysisResults:
     cycle_findings = detect_circular_imports(graph, config)
     findings.extend(cycle_findings)
 
+    findings.extend(detect_high_complexity(modules, config))
+
+    duplicates, dupe_findings = detect_duplicates(files, root, config)
+    findings.extend(dupe_findings)
+
+    health = compute_project_health(modules, config)
+
     results = AnalysisResults(
         findings=findings,
         cycles=cycles,
+        duplicates=duplicates,
+        health=health,
         total_files_scanned=len(files),
     )
     results.compute_totals()
