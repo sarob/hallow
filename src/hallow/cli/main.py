@@ -498,5 +498,97 @@ def _run_fix(
         console.print()
 
 
+@app.command()
+def security(
+    root: Path | None = typer.Option(
+        None,
+        "--root",
+        "-r",
+        help="Project root directory",
+    ),
+    config: Path | None = typer.Option(
+        None,
+        "--config",
+        "-c",
+        help="Config file path",
+    ),
+    format: str = typer.Option(
+        "human",
+        "--format",
+        "-f",
+        help="Output format: human, json, sarif",
+    ),
+    output_file: Path | None = typer.Option(
+        None,
+        "--output",
+        "-o",
+        help="Write output to file",
+    ),
+    ci: bool = typer.Option(
+        False,
+        "--ci",
+        help="CI mode — exit 1 on any error-level issue",
+    ),
+) -> None:
+    """Scan for hardcoded secrets and taint sinks."""
+    _run_security(
+        root=root,
+        config_path=config,
+        fmt=format,
+        output_file=output_file,
+        ci=ci,
+    )
+
+
+@app.command()
+def mcp(
+    stdio: bool = typer.Option(
+        True,
+        "--stdio/--no-stdio",
+        help="Run MCP server over stdio (default)",
+    ),
+) -> None:
+    """Start the MCP server for agent-driven analysis."""
+    from hallow.mcp import create_mcp_app
+
+    server = create_mcp_app()
+    server.run_stdio()
+
+
+def _run_security(
+    root: Path | None,
+    config_path: Path | None,
+    fmt: str,
+    output_file: Path | None,
+    ci: bool,
+) -> None:
+    from hallow.config import load_config
+    from hallow.core.discovery import discover_python_files
+    from hallow.extract import extract_modules_parallel
+    from hallow.security import detect_hardcoded_secrets, detect_taint_sinks
+    from hallow.types import AnalysisResults
+
+    cfg = load_config(root=root, config_path=config_path)
+    root_path = cfg.root.resolve()
+    files = discover_python_files(cfg)
+    modules = extract_modules_parallel(files, root_path)
+
+    findings = []
+    findings.extend(detect_hardcoded_secrets(modules, root_path, cfg))
+    findings.extend(detect_taint_sinks(modules, root_path, cfg))
+
+    results = AnalysisResults(
+        findings=findings,
+        total_files_scanned=len(files),
+    )
+    results.compute_totals()
+    results.sort()
+
+    _emit_results(results, fmt, output_file)
+
+    if ci and results.errors > 0:
+        raise typer.Exit(code=1)
+
+
 if __name__ == "__main__":
     app()

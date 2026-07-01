@@ -18,6 +18,7 @@ from hallow.core.health import compute_project_health, detect_high_complexity
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
 from hallow.plugins import load_plugins
+from hallow.security import detect_hardcoded_secrets, detect_taint_sinks
 from hallow.types import AnalysisResults
 
 
@@ -51,6 +52,9 @@ def analyze(config: HallowConfig) -> AnalysisResults:
 
     duplicates, dupe_findings = detect_duplicates(files, root, config)
     findings.extend(dupe_findings)
+
+    findings.extend(detect_hardcoded_secrets(modules, root, config))
+    findings.extend(detect_taint_sinks(modules, root, config))
 
     filtered = _apply_plugin_suppressions(findings, plugins)
 

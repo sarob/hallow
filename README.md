@@ -14,7 +14,7 @@ Inspired by [fallow](https://github.com/fallow-rs/fallow) (JS/TS), adapted for P
 | **Phase 2** | Complexity + Health + Duplication | **Complete** |
 | **Phase 3** | Boundaries + Plugins + Fix | **Complete** |
 | **Phase 4** | Output Formats + Audit + CI | **Complete** |
-| **Phase 5** | Security + MCP + Polish | In progress |
+| **Phase 5** | Security + MCP + Polish | **Complete** |
 
 ## Install
 
@@ -151,9 +151,10 @@ Nine modules mirroring Fallow's crate structure:
 - `hallow fix --dry-run` previews safe changes
 - `hallow fix --apply` removes unused imports, deletes dead files, strips unused deps from `pyproject.toml`
 
-**Security** *(planned)*
-- Hardcoded secrets (API keys, tokens, passwords)
-- Taint propagation from user input to dangerous sinks
+**Security**
+- Hardcoded secrets (API keys, tokens, passwords, private keys, JWTs)
+- Taint sink detection (eval, exec, os.system, subprocess, pickle, SQL injection)
+- Safe-context filtering (env vars, config lookups, placeholders)
 
 **Output formats**
 - Human (Rich ANSI), JSON, compact
@@ -169,8 +170,10 @@ Nine modules mirroring Fallow's crate structure:
 - PR-scoped audit with `hallow audit --changed-since`
 - Baseline files (`--save-baseline` / `--baseline`) for regression prevention
 
-**MCP server** *(planned)*
-- 12+ tools: analyze, audit, dupes, health, security, explain, fix, impact
+**MCP server**
+- JSON-RPC 2.0 over stdio — `hallow mcp --stdio`
+- 6 tools: analyze, health, complexity, cycles, duplicates, explain
+- Agent-driven codebase intelligence via Model Context Protocol
 
 ## Configuration
 
