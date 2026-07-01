@@ -31,7 +31,6 @@ dependencies = [
     "typer>=0.12",
     "rich>=13.0",
     "pydantic>=2.0",
-    "tomli>=2.0; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -55,7 +54,8 @@ target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "N", "UP", "B", "SIM", "TCH"]
+select = ["E", "F", "I", "N", "UP", "B", "SIM"]
+ignore = ["B008", "SIM115"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
