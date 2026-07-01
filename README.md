@@ -11,9 +11,9 @@ Inspired by [fallow](https://github.com/fallow-rs/fallow) (JS/TS), adapted for P
 | Phase | Scope | Status |
 |-------|-------|--------|
 | **Phase 1** | Foundation + Dead Code | **Complete** |
-| **Phase 2** | Complexity + Health + Duplication | In progress |
-| Phase 3 | Boundaries + Plugins + Fix | Planned |
-| Phase 4 | Output Formats + Audit + CI | Planned |
+| **Phase 2** | Complexity + Health + Duplication | **Complete** |
+| **Phase 3** | Boundaries + Plugins + Fix | **Complete** |
+| **Phase 4** | Output Formats + Audit + CI | In progress |
 | Phase 5 | Security + MCP + Polish | Planned |
 
 ## Install
@@ -137,19 +137,23 @@ Nine modules mirroring Fallow's crate structure:
 - Detection via Tarjan's strongly connected components
 - Full cycle chain visualization
 
-**Architecture boundaries** *(planned)*
+**Architecture boundaries**
 - Layered, hexagonal, feature-sliced presets
 - Custom zone definitions with import rules
 - Namespace package awareness
 
+**Framework plugins**
+- Auto-detected from `pyproject.toml` dependencies
+- Django, Flask, FastAPI, pytest, Celery
+- Suppresses false positives for framework-registered exports (decorators, entry files, migrations)
+
+**Auto-fix**
+- `hallow fix --dry-run` previews safe changes
+- `hallow fix --apply` removes unused imports, deletes dead files, strips unused deps from `pyproject.toml`
+
 **Security** *(planned)*
 - Hardcoded secrets (API keys, tokens, passwords)
 - Taint propagation from user input to dangerous sinks
-
-**Auto-fix** *(planned)*
-- Remove unused imports
-- Delete dead files
-- Remove unused dependencies from `pyproject.toml`
 
 **Output formats**
 - Human (Rich ANSI), JSON, compact
