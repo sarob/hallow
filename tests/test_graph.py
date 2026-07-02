@@ -80,6 +80,42 @@ def test_external_imports():
     assert "os" in ext
 
 
+def test_absolute_from_package_import_submodule_edge():
+    # `from pkg import submodule` must create an edge to pkg/submodule.py.
+    modules = {
+        "pkg/__init__.py": _make_module("pkg/__init__.py"),
+        "pkg/sub.py": _make_module("pkg/sub.py"),
+        "app.py": _make_module("app.py", [_import("pkg", ["sub"])]),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert "pkg/sub.py" in graph.imports_of("app.py")
+    assert "app.py" in graph.importers_of("pkg/sub.py")
+
+
+def test_relative_from_package_import_submodule_edge():
+    modules = {
+        "pkg/__init__.py": _make_module("pkg/__init__.py"),
+        "pkg/sub.py": _make_module("pkg/sub.py"),
+        "pkg/app.py": _make_module(
+            "pkg/app.py",
+            [ImportInfo(module="", names=["sub"], is_from_import=True, is_relative=True, level=1)],
+        ),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert "pkg/sub.py" in graph.imports_of("pkg/app.py")
+
+
+def test_symbol_import_does_not_create_spurious_submodule_edge():
+    # `from pkg import helper` where helper is a symbol (no pkg/helper.py) must
+    # not invent an edge.
+    modules = {
+        "pkg/__init__.py": _make_module("pkg/__init__.py"),
+        "app.py": _make_module("app.py", [_import("pkg", ["helper"])]),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert graph.imports_of("app.py") == {"pkg/__init__.py"}
+
+
 def test_unreachable_files():
     modules = {
         "main.py": _make_module("main.py", [_import("lib", ["helper"])]),
