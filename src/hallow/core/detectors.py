@@ -59,6 +59,27 @@ _ENTRYPOINT_DECORATORS = frozenset(
     }
 )
 
+# Import name -> normalized PyPI distribution name, for packages whose import
+# name differs from the distribution declared in pyproject. Used by both the
+# unused- and unlisted-dependency detectors so aliases resolve consistently.
+_KNOWN_IMPORT_ALIASES: dict[str, str] = {
+    "pil": "pillow",
+    "cv2": "opencv_python",
+    "sklearn": "scikit_learn",
+    "yaml": "pyyaml",
+    "gi": "pygobject",
+    "attr": "attrs",
+    "bs4": "beautifulsoup4",
+    "dateutil": "python_dateutil",
+    "dotenv": "python_dotenv",
+    "jwt": "pyjwt",
+    "serial": "pyserial",
+    "usb": "pyusb",
+    "magic": "python_magic",
+    "lxml": "lxml",
+    "google": "google_cloud",
+}
+
 
 def detect_unused_files(
     graph: ModuleGraph,
@@ -276,24 +297,6 @@ def detect_unused_dependencies(
     all_imports = graph.all_external_imports()
     normalized_imports = {i.lower().replace("-", "_").replace(".", "_") for i in all_imports}
 
-    known_aliases: dict[str, str] = {
-        "pil": "pillow",
-        "cv2": "opencv_python",
-        "sklearn": "scikit_learn",
-        "yaml": "pyyaml",
-        "gi": "pygobject",
-        "attr": "attrs",
-        "bs4": "beautifulsoup4",
-        "dateutil": "python_dateutil",
-        "dotenv": "python_dotenv",
-        "jwt": "pyjwt",
-        "serial": "pyserial",
-        "usb": "pyusb",
-        "magic": "python_magic",
-        "lxml": "lxml",
-        "google": "google_cloud",
-    }
-
     findings: list[Finding] = []
     for dep in declared_deps:
         if dep in config.ignore_dependencies:
@@ -301,7 +304,7 @@ def detect_unused_dependencies(
 
         is_used = dep in normalized_imports
         if not is_used:
-            for imp, alias in known_aliases.items():
+            for imp, alias in _KNOWN_IMPORT_ALIASES.items():
                 if alias == dep and imp in normalized_imports:
                     is_used = True
                     break
@@ -360,6 +363,12 @@ def detect_unlisted_dependencies(
     for imp in sorted(all_imports):
         normalized = imp.lower().replace("-", "_").replace(".", "_")
         if normalized in declared:
+            continue
+        # The package may be declared under a distribution name that differs
+        # from the import name (e.g. `import jwt` -> PyJWT, `import cv2` ->
+        # opencv-python).
+        alias = _KNOWN_IMPORT_ALIASES.get(normalized)
+        if alias and alias in declared:
             continue
         if imp in stdlib:
             continue
