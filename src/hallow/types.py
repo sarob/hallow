@@ -39,7 +39,8 @@ class RuleId(StrEnum):
 
 class ImportInfo(BaseModel):
     module: str
-    names: list[str] = Field(default_factory=list)
+    names: list[str] = Field(default_factory=list)  # source names (for graph resolution)
+    bound_names: list[str] = Field(default_factory=list)  # locally-bound names (after `as`)
     alias: str | None = None
     is_from_import: bool = False
     is_relative: bool = False
@@ -81,6 +82,10 @@ class ModuleInfo(BaseModel):
     functions: list[FunctionComplexity] = Field(default_factory=list)
     classes: list[str] = Field(default_factory=list)
     global_variables: list[str] = Field(default_factory=list)
+    # names used (loaded) anywhere in the module body
+    referenced_names: set[str] = Field(default_factory=set)
+    # physical lines carrying a `# noqa` that suppresses unused-imports (F401)
+    noqa_lines: set[int] = Field(default_factory=set)
     docstring: str | None = None
     is_init: bool = False
     is_main: bool = False

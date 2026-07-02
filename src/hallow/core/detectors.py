@@ -12,7 +12,6 @@ from hallow.types import (
     Finding,
     FixAction,
     Location,
-    ModuleInfo,
     RuleId,
     Severity,
 )
@@ -60,71 +59,56 @@ def detect_unused_imports(
         if module.is_init:
             continue
 
-        used_names: set[str] = set()
-        for export in module.exports:
-            used_names.add(export.name)
-        for var in module.global_variables:
-            used_names.add(var)
-        for cls in module.classes:
-            used_names.add(cls)
-
-        all_names_in_scope = _collect_all_referenced_names(module)
+        # A name actually used anywhere in the module body (as a value). Names
+        # re-exported via __all__ also count as used.
+        referenced = module.referenced_names
+        exported = set(module.all_list or [])
 
         for imp in module.imports:
             if imp.is_type_checking:
                 continue
+            # `from __future__ import ...` are compiler directives, never
+            # referenced as names — they must never be reported as unused.
+            if imp.module == "__future__":
+                continue
+            # Respect `# noqa` / `# noqa: F401` on the import line (intentional
+            # re-exports and side-effect imports).
+            if imp.line in module.noqa_lines:
+                continue
 
             if imp.is_from_import:
-                for name in imp.names:
-                    if name == "*":
+                bound_list = imp.bound_names or imp.names
+                for src_name, bound in zip(imp.names, bound_list, strict=False):
+                    if src_name == "*":
                         continue
-                    if name not in all_names_in_scope and name not in used_names:
-                        findings.append(
-                            Finding(
-                                rule=RuleId.UNUSED_IMPORTS,
-                                severity=severity,
-                                message=f"'{name}' imported from '{imp.module}' is unused",
-                                location=Location(file=path, line=imp.line, col=imp.col),
-                                fix=FixAction(kind="remove_import", target=name),
-                            )
-                        )
-            else:
-                alias = imp.alias or imp.module.split(".")[-1]
-                if alias not in all_names_in_scope and alias not in used_names:
+                    if bound in referenced or bound in exported or src_name in exported:
+                        continue
                     findings.append(
                         Finding(
                             rule=RuleId.UNUSED_IMPORTS,
                             severity=severity,
-                            message=f"'{alias}' (import {imp.module}) is unused",
+                            message=f"'{src_name}' imported from '{imp.module}' is unused",
                             location=Location(file=path, line=imp.line, col=imp.col),
-                            fix=FixAction(kind="remove_import", target=alias),
+                            fix=FixAction(kind="remove_import", target=src_name),
+                        )
+                    )
+            else:
+                # `import a.b.c` binds `a`; `import a.b as x` binds `x`.
+                bound_list = imp.bound_names or [imp.alias or imp.module.split(".")[0]]
+                for bound in bound_list:
+                    if bound in referenced or bound in exported:
+                        continue
+                    findings.append(
+                        Finding(
+                            rule=RuleId.UNUSED_IMPORTS,
+                            severity=severity,
+                            message=f"'{bound}' (import {imp.module}) is unused",
+                            location=Location(file=path, line=imp.line, col=imp.col),
+                            fix=FixAction(kind="remove_import", target=bound),
                         )
                     )
 
     return findings
-
-
-def _collect_all_referenced_names(module: ModuleInfo) -> set[str]:
-    names: set[str] = set()
-    for export in module.exports:
-        names.add(export.name)
-        names.update(export.decorators)
-    for func in module.functions:
-        names.add(func.name)
-    for cls in module.classes:
-        names.add(cls)
-    for var in module.global_variables:
-        names.add(var)
-    if module.all_list:
-        names.update(module.all_list)
-    for imp in module.imports:
-        if imp.is_from_import:
-            names.update(imp.names)
-        elif imp.alias:
-            names.add(imp.alias)
-        elif imp.module:
-            names.add(imp.module.split(".")[0])
-    return names
 
 
 def detect_unused_exports(

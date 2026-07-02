@@ -4,14 +4,36 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import re
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
 from hallow.types import ExportInfo, FunctionComplexity, ImportInfo, ModuleInfo
 
+# ruff/flake8 F401 == "imported but unused"; hallow maps it to `unused-imports`.
+_NOQA_RE = re.compile(r"#\s*noqa(?::\s*(?P<codes>[A-Z0-9, ]+))?", re.IGNORECASE)
+_UNUSED_IMPORT_CODES = {"F401"}
+
 
 def _hash_content(source: str) -> str:
     return hashlib.sha256(source.encode()).hexdigest()[:16]
+
+
+def _collect_noqa_lines(source: str) -> set[int]:
+    """Line numbers whose `# noqa` suppresses an unused-import finding.
+
+    A bare `# noqa` suppresses everything; `# noqa: F401` (or a code list that
+    includes F401) suppresses unused-imports specifically.
+    """
+    lines: set[int] = set()
+    for i, line in enumerate(source.splitlines(), 1):
+        m = _NOQA_RE.search(line)
+        if not m:
+            continue
+        codes = m.group("codes")
+        if codes is None or {c.strip().upper() for c in codes.split(",")} & _UNUSED_IMPORT_CODES:
+            lines.add(i)
+    return lines
 
 
 def _is_type_checking_block(node: ast.AST) -> bool:
@@ -51,10 +73,13 @@ class _ImportCollector(ast.NodeVisitor):
 
     def visit_Import(self, node: ast.Import) -> None:
         for alias in node.names:
+            # `import a.b.c` binds the top-level name `a`; `import a.b as x` binds `x`.
+            bound = alias.asname or alias.name.split(".")[0]
             self.imports.append(
                 ImportInfo(
                     module=alias.name,
                     names=[],
+                    bound_names=[bound],
                     alias=alias.asname,
                     is_from_import=False,
                     is_relative=False,
@@ -71,10 +96,12 @@ class _ImportCollector(ast.NodeVisitor):
         module = node.module or ""
         level = node.level or 0
         names = [a.name for a in node.names] if node.names else []
+        bound_names = [a.asname or a.name for a in node.names] if node.names else []
         self.imports.append(
             ImportInfo(
                 module=module,
                 names=names,
+                bound_names=bound_names,
                 is_from_import=True,
                 is_relative=level > 0,
                 level=level,
@@ -85,6 +112,21 @@ class _ImportCollector(ast.NodeVisitor):
                 col=node.col_offset,
             )
         )
+
+
+def _collect_referenced_names(tree: ast.Module) -> set[str]:
+    """Every name loaded (used as a value) anywhere in the module.
+
+    Import statements bind names via ``alias`` nodes, not ``ast.Name``, and
+    def/class names are strings — so this set is pure usage, never self-reference.
+    For ``a.b.c`` the root ``a`` is a ``Name`` load, so dotted-attribute use is
+    captured. Decorators, annotations, f-string expressions, etc. are included.
+    """
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
+            names.add(node.id)
+    return names
 
 
 def _extract_all_list(tree: ast.Module) -> list[str] | None:
@@ -298,6 +340,8 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
 
     docstring = ast.get_docstring(tree)
     functions = _extract_functions(tree)
+    referenced_names = _collect_referenced_names(tree)
+    noqa_lines = _collect_noqa_lines(source)
 
     is_init = path.name == "__init__.py"
     is_main = path.name == "__main__.py"
@@ -320,6 +364,8 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         functions=functions,
         classes=classes,
         global_variables=global_vars,
+        referenced_names=referenced_names,
+        noqa_lines=noqa_lines,
         docstring=docstring,
         is_init=is_init,
         is_main=is_main,
