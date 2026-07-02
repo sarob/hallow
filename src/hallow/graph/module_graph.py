@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections import defaultdict
 from pathlib import Path
 
-from hallow.graph.resolver import resolve_import
+from hallow.graph.resolver import resolve_import, resolve_submodule
 from hallow.types import ImportCycle, ModuleInfo
 
 
@@ -43,6 +43,16 @@ class ModuleGraph:
                     top_level = imp.module.split(".")[0] if imp.module else ""
                     if top_level:
                         self._external_imports[path].add(top_level)
+
+                # `from <pkg> import <submodule>` imports the submodule as a
+                # module — add an edge to each name that resolves to a file.
+                if imp.is_from_import:
+                    for name in imp.names:
+                        sub = resolve_submodule(imp, path, name, all_paths)
+                        if sub and sub in all_paths:
+                            self._edges[path].add(sub)
+                            self._reverse_edges[sub].add(path)
+                            self._symbol_edges[path][sub].append(name)
 
         self._identify_entry_points()
         self._compute_reachability()

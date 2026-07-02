@@ -27,6 +27,44 @@ def resolve_import(
     return _resolve_absolute(imp.module, root, all_paths)
 
 
+def resolve_submodule(
+    imp: ImportInfo,
+    importer_path: str,
+    name: str,
+    all_paths: set[str],
+) -> str | None:
+    """Resolve `from <pkg> import <name>` to a submodule file, if one exists.
+
+    `from fulcrum_cli.commands import bootstrap` imports the *module*
+    `fulcrum_cli/commands/bootstrap.py`, not a symbol of the package. Returns the
+    submodule path when it exists in the project, else None (so ordinary symbol
+    imports like `from typing import List` never create spurious edges).
+    """
+    if not name or name == "*":
+        return None
+
+    prefixes: list[str] = []
+    if imp.is_relative:
+        base_dir = Path(importer_path).parent
+        for _ in range(imp.level - 1):
+            base_dir = base_dir.parent
+        if imp.module:
+            base_dir = base_dir / "/".join(imp.module.split("."))
+        prefixes.append(base_dir.as_posix())
+    else:
+        if not imp.module:
+            return None
+        pkg = "/".join(imp.module.split("."))
+        prefixes.extend([pkg, f"src/{pkg}"])
+
+    for prefix in prefixes:
+        base = name if prefix in (".", "") else f"{prefix}/{name}"
+        for candidate in (f"{base}.py", f"{base}/__init__.py"):
+            if candidate in all_paths:
+                return candidate
+    return None
+
+
 def _resolve_relative(
     imp: ImportInfo,
     importer_path: str,
