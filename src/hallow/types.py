@@ -84,6 +84,8 @@ class ModuleInfo(BaseModel):
     global_variables: list[str] = Field(default_factory=list)
     # names used (loaded) anywhere in the module body
     referenced_names: set[str] = Field(default_factory=set)
+    # attribute names accessed as obj.attr (for cross-module `module.symbol` use)
+    accessed_attributes: set[str] = Field(default_factory=set)
     # physical lines carrying a `# noqa` that suppresses unused-imports (F401)
     noqa_lines: set[int] = Field(default_factory=set)
     docstring: str | None = None

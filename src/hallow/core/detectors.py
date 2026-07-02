@@ -16,6 +16,49 @@ from hallow.types import (
     Severity,
 )
 
+# Decorators that mean a symbol is registered/consumed by a framework or the
+# runtime rather than imported by name — so it must not be reported as unused.
+# Matched on the decorator's leaf name (e.g. `@app.command(...)` -> "command",
+# `@register("x")` -> "register").
+_ENTRYPOINT_DECORATORS = frozenset(
+    {
+        # Typer / Click
+        "command",
+        "callback",
+        "group",
+        # FastAPI / Flask / Starlette routing
+        "get",
+        "post",
+        "put",
+        "delete",
+        "patch",
+        "head",
+        "options",
+        "route",
+        "websocket",
+        "middleware",
+        "exception_handler",
+        "on_event",
+        # Celery / task queues
+        "task",
+        "shared_task",
+        "periodic_task",
+        # generic registries / plugin systems / pytest
+        "register",
+        "hookimpl",
+        "fixture",
+        # bare app/router objects and property accessors / interface markers
+        "app",
+        "router",
+        "setter",
+        "getter",
+        "deleter",
+        "abstractmethod",
+        "override",
+        "overload",
+    }
+)
+
 
 def detect_unused_files(
     graph: ModuleGraph,
@@ -71,7 +114,7 @@ def detect_unused_imports(
             # referenced as names — they must never be reported as unused.
             if imp.module == "__future__":
                 continue
-            # Respect `# noqa` / `# noqa: F401` on the import line (intentional
+            # Respect a noqa/F401 suppression on the import line (intentional
             # re-exports and side-effect imports).
             if imp.line in module.noqa_lines:
                 continue
@@ -145,10 +188,36 @@ def detect_unused_exports(
             if has_all and export.name not in (module.all_list or []):
                 continue
 
+            # Only report exports in modules that are part of the import graph;
+            # orphan modules are covered by the unused-file rule instead.
             if export.name not in consumed and not graph.importers_of(path):
                 continue
 
+            # Used by another module.
             if export.name in consumed:
+                continue
+
+            # Used within its own module (called, referenced as a value, used in
+            # an annotation, etc.). Without this, internally-used helpers, config
+            # classes referenced as field types, and module-level `logger`s were
+            # all false-flagged.
+            if export.name in module.referenced_names:
+                continue
+
+            # Consumed by an importer via module-attribute access rather than a
+            # named import — e.g. main.py does `from . import bootstrap` then
+            # `app.command(...)(bootstrap.bootstrap_agent)`. Not a symbol edge, so
+            # check importers' accessed attributes.
+            if any(
+                (imp_mod := graph.modules.get(imp)) is not None
+                and export.name in imp_mod.accessed_attributes
+                for imp in graph.importers_of(path)
+            ):
+                continue
+
+            # Registered via a framework/entry-point decorator (Typer command,
+            # FastAPI route, `@register(...)`, ...) — live code, not dead.
+            if any(d in _ENTRYPOINT_DECORATORS for d in export.decorators):
                 continue
 
             if export.kind == "function":
@@ -164,16 +233,11 @@ def detect_unused_exports(
             if sev == Severity.OFF:
                 continue
 
-            if "app" in export.decorators or "router" in export.decorators:
-                continue
-            if any(d in ("abstractmethod", "override") for d in export.decorators):
-                continue
-
             findings.append(
                 Finding(
                     rule=rule,
                     severity=sev,
-                    message=f"'{export.name}' is defined but never imported by another module",
+                    message=f"'{export.name}' is defined but never used or imported",
                     location=Location(file=path, line=export.line, col=export.col),
                     suggestion=f"Remove '{export.name}' if it is no longer used",
                     fix=FixAction(kind="remove_export", target=export.name, auto_fixable=False),

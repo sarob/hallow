@@ -129,6 +129,20 @@ def _collect_referenced_names(tree: ast.Module) -> set[str]:
     return names
 
 
+def _collect_accessed_attributes(tree: ast.Module) -> set[str]:
+    """Attribute names accessed as ``obj.attr`` (loads).
+
+    Lets the dead-code detector recognize symbols consumed via module-attribute
+    access — e.g. ``from . import bootstrap`` then ``bootstrap.bootstrap_agent``,
+    which is not a named import and so is absent from the graph's symbol edges.
+    """
+    attrs: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.ctx, ast.Load):
+            attrs.add(node.attr)
+    return attrs
+
+
 def _extract_all_list(tree: ast.Module) -> list[str] | None:
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
@@ -146,39 +160,54 @@ def _extract_all_list(tree: ast.Module) -> list[str] | None:
     return None
 
 
+def _decorator_name(dec: ast.expr) -> str | None:
+    """Leaf name of a decorator, unwrapping calls.
+
+    `@foo` -> "foo", `@a.b.command` -> "command", `@app.command("x")` -> "command",
+    `@register("name")` -> "register". Call forms (`@deco(...)`) are unwrapped to
+    their callee so registration decorators like Typer's `@app.command(...)` are
+    captured (previously dropped entirely).
+    """
+    if isinstance(dec, ast.Call):
+        dec = dec.func
+    if isinstance(dec, ast.Name):
+        return dec.id
+    if isinstance(dec, ast.Attribute):
+        return dec.attr
+    return None
+
+
+def _decorator_names(node: ast.FunctionDef | ast.AsyncFunctionDef | ast.ClassDef) -> list[str]:
+    names: list[str] = []
+    for dec in node.decorator_list:
+        name = _decorator_name(dec)
+        if name:
+            names.append(name)
+    return names
+
+
 def _classify_export(name: str, node: ast.AST) -> ExportInfo | None:
     is_private = name.startswith("_") and not name.startswith("__")
     is_dunder = name.startswith("__") and name.endswith("__")
 
-    decorators: list[str] = []
     if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Name):
-                decorators.append(dec.id)
-            elif isinstance(dec, ast.Attribute):
-                decorators.append(dec.attr)
         return ExportInfo(
             name=name,
             kind="function",
             line=node.lineno,
             col=node.col_offset,
-            decorators=decorators,
+            decorators=_decorator_names(node),
             is_dunder=is_dunder,
             is_private=is_private,
         )
 
     if isinstance(node, ast.ClassDef):
-        for dec in node.decorator_list:
-            if isinstance(dec, ast.Name):
-                decorators.append(dec.id)
-            elif isinstance(dec, ast.Attribute):
-                decorators.append(dec.attr)
         return ExportInfo(
             name=name,
             kind="class",
             line=node.lineno,
             col=node.col_offset,
-            decorators=decorators,
+            decorators=_decorator_names(node),
             is_dunder=is_dunder,
             is_private=is_private,
         )
@@ -341,6 +370,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
     docstring = ast.get_docstring(tree)
     functions = _extract_functions(tree)
     referenced_names = _collect_referenced_names(tree)
+    accessed_attributes = _collect_accessed_attributes(tree)
     noqa_lines = _collect_noqa_lines(source)
 
     is_init = path.name == "__init__.py"
@@ -365,6 +395,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         classes=classes,
         global_variables=global_vars,
         referenced_names=referenced_names,
+        accessed_attributes=accessed_attributes,
         noqa_lines=noqa_lines,
         docstring=docstring,
         is_init=is_init,
