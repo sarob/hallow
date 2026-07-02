@@ -7,7 +7,11 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 from hallow.config.loader import HallowConfig
-from hallow.core.detectors import detect_unused_exports, detect_unused_imports
+from hallow.core.detectors import (
+    detect_unlisted_dependencies,
+    detect_unused_exports,
+    detect_unused_imports,
+)
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
 
@@ -318,3 +322,44 @@ def test_genuinely_unused_export_is_flagged():
     )
     assert any("orphan_thing" in m for m in msgs), msgs
     assert not any("used_thing" in m for m in msgs), msgs
+
+
+# ── unlisted-dependencies (import->package alias resolution) ──
+
+
+def _unlisted_deps(files: dict[str, str], pyproject: str) -> list[str]:
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        (root / "pyproject.toml").write_text(textwrap.dedent(pyproject))
+        for name, src in files.items():
+            (root / name).write_text(textwrap.dedent(src))
+        paths = sorted(root.glob("*.py"))
+        modules = extract_modules_parallel(paths, root)
+        graph = ModuleGraph(modules, root)
+        cfg = HallowConfig(root=root)
+        return [f.message for f in detect_unlisted_dependencies(graph, cfg)]
+
+
+def test_aliased_dependency_not_flagged_as_unlisted():
+    # `import jwt` is satisfied by the declared PyJWT distribution.
+    msgs = _unlisted_deps(
+        {"mod.py": "import jwt as pyjwt\n\nx = pyjwt\n"},
+        pyproject="""
+            [project]
+            name = "demo"
+            dependencies = ["pyjwt>=2.8.0"]
+        """,
+    )
+    assert not any("jwt" in m for m in msgs), msgs
+
+
+def test_truly_unlisted_dependency_is_flagged():
+    msgs = _unlisted_deps(
+        {"mod.py": "import requests\n\nx = requests\n"},
+        pyproject="""
+            [project]
+            name = "demo"
+            dependencies = ["pyjwt>=2.8.0"]
+        """,
+    )
+    assert any("requests" in m for m in msgs), msgs
