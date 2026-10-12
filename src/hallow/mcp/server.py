@@ -107,6 +107,10 @@ _RULE_EXPLANATIONS = {
     "unlisted-dependencies": (
         "Packages imported in code but not declared in pyproject.toml. Filters out stdlib modules."
     ),
+    "unused-all-entries": (
+        "Names listed in __all__ that the module neither defines nor imports. "
+        "`from module import *` raises AttributeError on them."
+    ),
     "circular-dependencies": (
         "Detects import cycles using Tarjan's strongly connected components algorithm."
     ),

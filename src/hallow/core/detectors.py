@@ -388,6 +388,73 @@ def detect_unlisted_dependencies(
     return findings
 
 
+# Names every module has without binding them.
+_IMPLICIT_MODULE_NAMES = frozenset(
+    {
+        "__name__",
+        "__doc__",
+        "__file__",
+        "__spec__",
+        "__loader__",
+        "__package__",
+        "__builtins__",
+        "__cached__",
+        "__annotations__",
+        "__dict__",
+    }
+)
+
+
+def detect_unused_all_entries(
+    graph: ModuleGraph,
+    config: HallowConfig,
+) -> list[Finding]:
+    """`__all__` entries that name nothing the module binds.
+
+    `from module import *` raises AttributeError on such an entry. Allowed:
+    names every module has (`__name__`, ...), `__path__` in a package, and in
+    a package `__init__.py` an entry naming a submodule or subpackage —
+    checked on disk, so namespace subpackages (no `__init__.py`) and
+    submodules excluded from analysis by ignore patterns count. Skipped:
+    modules that bind names dynamically (`from x import *`, `globals()`,
+    `exec`, `setattr`, `vars`), define a module `__getattr__` (PEP 562), or
+    assign or mutate `__all__` more than once (the first literal list is then
+    not what star-import exports).
+    """
+    severity = config.rules.severity_for(RuleId.UNUSED_ALL_ENTRIES)
+    if severity == Severity.OFF:
+        return []
+
+    root = config.root.resolve()
+    findings: list[Finding] = []
+    for path, module in graph.modules.items():
+        if module.all_list is None or module.has_dynamic_bindings or module.all_modified:
+            continue
+        if "__getattr__" in module.bound_names:
+            continue
+
+        package_dir = root / path.rsplit("/", 1)[0] if "/" in path else root
+        for name in module.all_list:
+            if name in module.bound_names or name in _IMPLICIT_MODULE_NAMES:
+                continue
+            if module.is_init:
+                if name == "__path__":
+                    continue
+                if (package_dir / f"{name}.py").is_file() or (package_dir / name).is_dir():
+                    continue
+            findings.append(
+                Finding(
+                    rule=RuleId.UNUSED_ALL_ENTRIES,
+                    severity=severity,
+                    message=f"'{name}' is listed in __all__ but not defined or imported",
+                    location=Location(file=path, line=module.all_line or 1),
+                    suggestion=f"Remove '{name}' from __all__ or define it",
+                    fix=FixAction(kind="remove_from_all", target=name, auto_fixable=False),
+                )
+            )
+    return findings
+
+
 def _get_stdlib_modules() -> set[str]:
     if hasattr(sys, "stdlib_module_names"):
         return sys.stdlib_module_names  # type: ignore[return-value]

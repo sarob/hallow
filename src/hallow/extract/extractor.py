@@ -208,7 +208,8 @@ def _collect_accessed_attributes(tree: ast.Module) -> set[str]:
     return attrs
 
 
-def _extract_all_list(tree: ast.Module) -> list[str] | None:
+def _extract_all_list(tree: ast.Module) -> tuple[list[str] | None, int]:
+    """The literal `__all__` list and the line it is assigned on."""
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -221,8 +222,156 @@ def _extract_all_list(tree: ast.Module) -> list[str] | None:
                         elt.value
                         for elt in node.value.elts
                         if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                    ]
-    return None
+                    ], node.lineno
+    return None, 0
+
+
+_DYNAMIC_BINDERS = frozenset({"globals", "exec", "setattr", "vars"})
+
+
+# list methods that change the contents of `__all__`
+_MUTATING_METHODS = frozenset(
+    {"append", "extend", "insert", "remove", "pop", "clear", "__iadd__", "__imul__",
+     "__setitem__", "__delitem__"}
+)  # fmt: skip
+
+
+def _all_is_modified(tree: ast.Module) -> bool:
+    """True unless module-level `__all__` is bound exactly once and never changed.
+
+    Counts as a change: a second module-level binding (assignment, walrus,
+    annotated assignment), augmented assignment (`+=`, `*=`), item or slice
+    assignment or deletion (`__all__[:] = ...`, `del __all__[:]`), `del
+    __all__`, or a mutating list method (`append`, `remove`, `clear`, ...).
+    Bindings inside a function count only when the function declares
+    `global __all__`; read-only methods (`count`, `index`, `copy`) do not.
+    """
+    bindings = 0
+
+    def visit(node: ast.AST, in_function: bool, global_all: bool) -> bool:
+        nonlocal bindings
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            declares = any(
+                isinstance(n, ast.Global) and "__all__" in n.names for n in ast.walk(node)
+            )
+            return any(visit(c, True, declares) for c in ast.iter_child_nodes(node))
+        if isinstance(node, ast.ClassDef):
+            return any(visit(c, in_function, global_all) for c in ast.iter_child_nodes(node))
+
+        module_binding = not in_function or global_all
+        if isinstance(node, ast.AnnAssign) and node.value is None:
+            return False  # `__all__: list[str]` annotates; it binds nothing
+        if isinstance(node, ast.AugAssign) and (
+            _names_all(node.target)
+            or (isinstance(node.target, ast.Subscript) and _names_all(node.target.value))
+        ):
+            return True
+        if isinstance(node, ast.Name) and node.id == "__all__" and module_binding:
+            # every binding form reaches here: plain, unpacking (`__all__, x =
+            # [], 0`), annotated, walrus, for/with targets; `del __all__` too
+            if isinstance(node.ctx, ast.Del):
+                return True
+            if isinstance(node.ctx, ast.Store):
+                bindings += 1
+            return False
+        if isinstance(node, (ast.Assign, ast.Delete)):
+            for t in node.targets:
+                if isinstance(t, ast.Subscript) and _names_all(t.value):
+                    return True  # `__all__[:] = ...`, `del __all__[:]`
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and _names_all(node.func.value)
+            and node.func.attr in _MUTATING_METHODS
+        ):
+            return True
+        return any(visit(c, in_function, global_all) for c in ast.iter_child_nodes(node))
+
+    if visit(tree, False, False):
+        return True
+    return bindings > 1
+
+
+def _names_all(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "__all__"
+
+
+def _collect_module_bindings(tree: ast.Module) -> tuple[set[str], bool]:
+    """Names bound at module scope, and whether the module binds names dynamically.
+
+    Walks every module-level statement including the bodies of `if`, `try`,
+    `with`, `for`, `while` and `match`, but not function or class bodies. Errs
+    toward over-reporting bindings: a name counted as bound can only hide an
+    `__all__` finding, never invent one.
+    """
+    bound: set[str] = set()
+    dynamic = False
+
+    def add_target(target: ast.AST) -> None:
+        for n in ast.walk(target):
+            if isinstance(n, ast.Name):
+                bound.add(n.id)
+
+    def visit(stmts: list[ast.stmt]) -> None:
+        nonlocal dynamic
+        for node in stmts:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+                continue
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    bound.add(a.asname or a.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    if a.name == "*":
+                        dynamic = True
+                    else:
+                        bound.add(a.asname or a.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    add_target(t)
+            elif isinstance(node, ast.AnnAssign):
+                # `x: int` alone declares an annotation but binds no value
+                if node.value is not None:
+                    add_target(node.target)
+            elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor)):
+                add_target(node.target)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        add_target(item.optional_vars)
+            elif type(node).__name__ == "TypeAlias":
+                add_target(node.name)  # type: ignore[attr-defined]
+
+            for field in ("body", "orelse", "finalbody"):
+                visit(getattr(node, field, []) or [])
+            for handler in getattr(node, "handlers", []) or []:
+                if handler.name:
+                    bound.add(handler.name)
+                visit(handler.body)
+            if isinstance(node, ast.Match):
+                for case in node.cases:
+                    for p in ast.walk(case.pattern):
+                        name = getattr(p, "name", None) or getattr(p, "rest", None)
+                        if isinstance(name, str):
+                            bound.add(name)
+                    visit(case.body)
+
+    visit(tree.body)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Global):
+            bound.update(node.names)
+        elif isinstance(node, ast.NamedExpr):
+            add_target(node.target)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _DYNAMIC_BINDERS
+        ):
+            dynamic = True
+
+    return bound, dynamic
 
 
 def _decorator_name(dec: ast.expr) -> str | None:
@@ -401,7 +550,9 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
     collector = _ImportCollector()
     collector.visit(tree)
 
-    all_list = _extract_all_list(tree)
+    all_list, all_line = _extract_all_list(tree)
+    bound_names, has_dynamic_bindings = _collect_module_bindings(tree)
+    all_modified = all_list is not None and _all_is_modified(tree)
 
     exports: list[ExportInfo] = []
     classes: list[str] = []
@@ -457,6 +608,10 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         imports=collector.imports,
         exports=exports,
         all_list=all_list,
+        all_line=all_line,
+        bound_names=bound_names,
+        has_dynamic_bindings=has_dynamic_bindings,
+        all_modified=all_modified,
         functions=functions,
         classes=classes,
         global_variables=global_vars,

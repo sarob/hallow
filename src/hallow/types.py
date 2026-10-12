@@ -93,6 +93,15 @@ class ModuleInfo(BaseModel):
     imports: list[ImportInfo] = Field(default_factory=list)
     exports: list[ExportInfo] = Field(default_factory=list)
     all_list: list[str] | None = None
+    all_line: int = 0
+    # every name bound at module scope (defs, classes, assignments in any
+    # branch, imports, `global` declarations) — used to check `__all__`
+    bound_names: set[str] = Field(default_factory=set)
+    # `from x import *`, `globals()[...]`, `exec(...)`: bindings not visible statically
+    has_dynamic_bindings: bool = False
+    # `__all__` is assigned more than once, augmented, or mutated by a method
+    # call, so the first literal list is not what star-import exports
+    all_modified: bool = False
     functions: list[FunctionComplexity] = Field(default_factory=list)
     classes: list[str] = Field(default_factory=list)
     global_variables: list[str] = Field(default_factory=list)
