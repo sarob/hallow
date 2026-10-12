@@ -9,6 +9,11 @@ from hallow.graph.resolver import resolve_import, resolve_submodule
 from hallow.types import ImportCycle, ModuleInfo
 
 
+def _is_project_package(module: str, project_dirs: set[str]) -> bool:
+    base = module.replace(".", "/")
+    return base in project_dirs or f"src/{base}" in project_dirs
+
+
 class ModuleGraph:
     def __init__(self, modules: dict[str, ModuleInfo], root: Path) -> None:
         self.modules = modules
@@ -25,6 +30,14 @@ class ModuleGraph:
 
     def _build(self) -> None:
         all_paths = set(self.modules.keys())
+        # Every directory holding project modules. A dotted import that maps to
+        # one is a project package even without an `__init__.py` (a PEP 420
+        # namespace package), so it is not an external dependency.
+        project_dirs: set[str] = set()
+        for p in all_paths:
+            parts = p.replace("\\", "/").split("/")[:-1]
+            for i in range(1, len(parts) + 1):
+                project_dirs.add("/".join(parts[:i]))
 
         for path, module in self.modules.items():
             for imp in module.imports:
@@ -41,7 +54,7 @@ class ModuleGraph:
                     self._symbol_edges[path][target].extend(names)
                 elif not imp.is_relative:
                     top_level = imp.module.split(".")[0] if imp.module else ""
-                    if top_level:
+                    if top_level and not _is_project_package(imp.module, project_dirs):
                         self._external_imports[path].add(top_level)
 
                 # `from <pkg> import <submodule>` imports the submodule as a
