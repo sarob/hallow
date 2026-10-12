@@ -48,8 +48,9 @@ $ hallow health --score
 # Duplicate detection
 $ hallow dupes --mode mild --min-lines 8
 
-# PR audit — only flag new issues in changed files
-$ hallow audit --changed-since origin/main --ci
+# PR gate — fail only on findings this change introduces
+$ hallow audit                      # base: merge-base with upstream / origin/main / main
+$ hallow audit --base origin/main --gate all
 
 # Auto-fix
 $ hallow fix --dry-run
@@ -168,7 +169,9 @@ Ten packages, one per pipeline stage or surface:
 - GitHub Action workflow definition
 - Pre-commit hook configuration
 - Exit-code gating: exit 1 on error-severity findings; `--ci` = SARIF + `--fail-on-issues` + `--quiet`
-- PR-scoped audit with `hallow audit --changed-since`
+- `hallow audit`: pass/warn/fail on the findings a change introduces, against a base re-analysed in a temporary worktree (no baseline file needed)
+- `hallow check --changed-since <ref>`: report only findings in changed files
+- `--fail-on-baseline-growth`: fail when a committed baseline gains entries
 - Baseline files (`--save-baseline` / `--baseline`) for regression prevention
 
 **MCP server**
@@ -230,6 +233,30 @@ def nightly_rollup(): ...
 
 `hallow-ignore` applies to its own line, `hallow-ignore-next-line` to the next line of code, and `hallow-ignore-file` to the whole file. Rule names are comma- or space-separated; with none, every rule is suppressed. A suppression that no longer matches a finding is reported as `stale-suppression`. `# noqa` / `# noqa: F401` still suppresses unused imports.
 
+## Gating a change: `hallow audit`
+
+```
+$ hallow audit
+Audit scope: 3 changed file(s) vs merge-base with origin/main (4c1d9e2a7b10)
+
+app/payments.py
+  E new unused-imports 're' imported from 're' is unused app/payments.py:4
+  W inherited high-complexity 'charge' has cyclomatic complexity 24 (max 20) app/payments.py:88
+
+✗ fail: 1 finding(s) gated · 1 inherited excluded (run with --gate all to enforce)
+```
+
+`hallow audit` analyses the working tree, keeps the findings that touch a changed file (committed, staged, unstaged or untracked), then re-analyses the base commit in a temporary `git worktree` with the same config and compares line-free finding keys:
+
+- a finding whose key exists at the base is **inherited**; otherwise it is **introduced**. Moving code keeps a finding inherited, and renamed files are mapped old → new, so a pure `git mv` stays inherited
+- a complexity finding is introduced when the function is new or the metric it exceeds went up
+- an introduced clone group none of whose fragments contains an added line is demoted to inherited
+- a change touching no Python file, dependency file or hallow config skips the base analysis
+
+The **verdict** is `fail` (exit 1) if a gated finding is error-severity, `warn` (exit 0) if one is warn-severity, else `pass`. `--gate new-only` (default) gates introduced findings; `--gate all` gates every finding in changed files and skips the base analysis.
+
+The base is `--base <ref>` (alias `--changed-since`), else `$HALLOW_AUDIT_BASE`, else the merge-base of HEAD with the branch's upstream, `origin/HEAD`, `origin/main`, `origin/master`, `main` or `master`; with none, audit exits 2. In CI, check out with full history (`fetch-depth: 0`). The JSON document (`kind: "audit"`) carries `verdict`, `base_ref`, `merge_base`, `changed_files`, per-category `attribution` and `introduced` on every finding; `--format sarif|github|...` emits only the gated findings.
+
 ## Finding IDs and baselines
 
 Every finding carries a `finding_id` such as `hl1:unused-functions:81a349a3b9ea3b15`. It is a hash of the rule, the file path and the symbol, never the line, so moving code keeps the id; renaming the file or the symbol changes it. Repeats of the same key get `~1`, `~2`, … in line order. SARIF output carries it as a `partialFingerprints` entry and CodeClimate output as its `fingerprint`.
@@ -242,7 +269,7 @@ hallow check --baseline hallow-baseline.json        # later runs report only new
 hallow baselines prune --baseline hallow-baseline.json [--check]
 ```
 
-A baseline stores one entry per occurrence, so N saved entries hide at most N current findings. The JSON output's `baseline_staleness` reports how many entries matched; when a quarter or more match nothing, a warning goes to stderr. `baselines prune` removes entries that no current finding matches and never adds any (`--check` changes nothing and exits 1 if there is something to prune). A file that is not a hallow `check` baseline — including the line-keyed format earlier versions wrote — suppresses nothing and is reported as unrecognised; re-save it.
+`--fail-on-baseline-growth` (with `--baseline`) fails when the committed baseline file holds an entry its version at `--baseline-base <ref>` (default: the audit base detection) lacks — so a baseline can only shrink. A baseline stores one entry per occurrence, so N saved entries hide at most N current findings. The JSON output's `baseline_staleness` reports how many entries matched; when a quarter or more match nothing, a warning goes to stderr. `baselines prune` removes entries that no current finding matches and never adds any (`--check` changes nothing and exits 1 if there is something to prune). A file that is not a hallow `check` baseline — including the line-keyed format earlier versions wrote — suppresses nothing and is reported as unrecognised; re-save it.
 
 ## Exit codes and JSON output
 

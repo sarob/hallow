@@ -52,7 +52,11 @@ FailOnIssuesOpt = Annotated[
 ]
 ChangedSinceOpt = Annotated[
     str | None,
-    typer.Option("--changed-since", help="Only check files changed since this git ref"),
+    typer.Option(
+        "--changed-since",
+        "--base",
+        help="Only report findings in files changed since this git ref (merge-base with HEAD)",
+    ),
 ]
 BaselineOpt = Annotated[
     Path | None,
@@ -67,6 +71,22 @@ FailOnStaleOpt = Annotated[
     typer.Option(
         "--fail-on-stale-baseline",
         help="Exit 1 if any --baseline entry matches no finding (or the file is not a baseline)",
+    ),
+]
+
+
+FailOnGrowthOpt = Annotated[
+    bool,
+    typer.Option(
+        "--fail-on-baseline-growth",
+        help="Exit 1 if the --baseline file holds entries its version at the base ref lacks",
+    ),
+]
+BaselineBaseOpt = Annotated[
+    str | None,
+    typer.Option(
+        "--baseline-base",
+        help="Ref to compare the baseline file against (default: the audit base detection)",
     ),
 ]
 
@@ -207,6 +227,8 @@ def main(
     baseline: BaselineOpt = None,
     save_baseline: SaveBaselineOpt = None,
     fail_on_stale_baseline: FailOnStaleOpt = False,
+    fail_on_baseline_growth: FailOnGrowthOpt = False,
+    baseline_base: BaselineBaseOpt = None,
     version: bool | None = typer.Option(
         None, "--version", "-V", callback=_version_callback, is_eager=True
     ),
@@ -217,6 +239,7 @@ def main(
     _run_check(
         root, config, format, output_file, ci, fail_on_issues, quiet, changed_since,
         boundaries, baseline, save_baseline, fail_on_stale_baseline,
+        fail_on_baseline_growth, baseline_base,
     )  # fmt: skip
 
 
@@ -234,6 +257,8 @@ def check(
     baseline: BaselineOpt = None,
     save_baseline: SaveBaselineOpt = None,
     fail_on_stale_baseline: FailOnStaleOpt = False,
+    fail_on_baseline_growth: FailOnGrowthOpt = False,
+    baseline_base: BaselineBaseOpt = None,
 ) -> None:
     """Run the full analysis: dead code, dependencies, cycles, duplication, complexity, security.
 
@@ -242,6 +267,7 @@ def check(
     _run_check(
         root, config, format, output_file, ci, fail_on_issues, quiet, changed_since,
         boundaries, baseline, save_baseline, fail_on_stale_baseline,
+        fail_on_baseline_growth, baseline_base,
     )  # fmt: skip
 
 
@@ -264,15 +290,30 @@ def _run_check(
     baseline_path: Path | None,
     save_baseline_path: Path | None,
     fail_on_stale_baseline: bool,
+    fail_on_baseline_growth: bool = False,
+    baseline_base: str | None = None,
 ) -> None:
     fmt, fail_on_issues, quiet = _ci_defaults(fmt, ci, fail_on_issues, quiet)
 
     def body() -> int:
         from hallow.core import analyze
-        from hallow.output.envelope import findings_gate, stale_baseline_gate
+        from hallow.output.envelope import (
+            baseline_growth_gate,
+            findings_gate,
+            stale_baseline_gate,
+        )
 
         start = time.monotonic()
         out_fmt = _check_format(fmt, CHECK_FORMATS)
+        if changed_since and save_baseline_path:
+            raise HallowError(
+                "--save-baseline needs a full run; drop --changed-since",
+                code="HALLOW_SCOPED_BASELINE_SAVE",
+            )
+        if fail_on_baseline_growth and not baseline_path:
+            raise HallowError(
+                "--fail-on-baseline-growth needs --baseline", code="HALLOW_MISSING_BASELINE"
+            )
         overrides: dict = {}
         if boundaries:
             overrides["boundaries"] = {"preset": boundaries}
@@ -281,20 +322,76 @@ def _run_check(
         cfg = _load_config(root, config_path, overrides)
 
         results = analyze(cfg)
-        results = _apply_baseline(results, baseline_path, save_baseline_path, quiet)
+        if changed_since:
+            results = _scope_to_changes(results, cfg.root.resolve(), changed_since, quiet)
+        results = _apply_baseline(
+            results, baseline_path, save_baseline_path, quiet, change_scoped=bool(changed_since)
+        )
 
         gates = {"findings": findings_gate(results.findings, fail_on_issues)}
         if baseline_path:
             gates["stale-baseline"] = stale_baseline_gate(
                 results.baseline_staleness, enforced=fail_on_stale_baseline
             )
+            if fail_on_baseline_growth:
+                added = _baseline_growth(cfg.root.resolve(), baseline_path, baseline_base, quiet)
+                gates["baseline-growth"] = baseline_growth_gate(added, enforced=True)
         _emit_results(results, out_fmt, output_file, "check", _elapsed_ms(start), gates)
         return _exit_for(gates)
 
     _guarded(fmt, body)
 
 
-def _apply_baseline(results, baseline_path, save_baseline_path, quiet: bool):
+def _scope_to_changes(results, root: Path, ref: str, quiet: bool):
+    """Keep only findings that touch a file changed since `ref`."""
+    from hallow.core.audit import finding_files
+    from hallow.core.gitutil import collect_changes, repo_top, resolve_base
+
+    top = repo_top(root)
+    base = resolve_base(top, ref)
+    changed = collect_changes(top, root, base.sha).files
+    _status(f"Scope: {len(changed)} changed file(s) since {base.ref}", quiet)
+    scoped = results.model_copy()
+    scoped.findings = [f for f in results.findings if finding_files(f) & changed]
+    scoped.compute_totals()
+    return scoped
+
+
+def _baseline_growth(root: Path, baseline_path: Path, ref: str | None, quiet: bool) -> int | None:
+    """Entries in the baseline file that its version at the base ref lacks.
+
+    None when the file did not exist at the base (nothing to compare: passes).
+    """
+    from collections import Counter
+
+    from hallow.core.baseline import load_baseline, parse_baseline
+    from hallow.core.gitutil import git, repo_top, resolve_base, show_file
+
+    top = repo_top(root)
+    base = resolve_base(top, ref)
+    if base.sha == git(top, "rev-parse", "HEAD").strip():
+        raise HallowError(
+            f"baseline base '{base.ref}' resolves to HEAD; nothing to compare against",
+            code="HALLOW_BASE_IS_HEAD",
+            help="Pass --baseline-base <ref> naming the branch this change targets.",
+        )
+    try:
+        rel = baseline_path.resolve().relative_to(top).as_posix()
+    except ValueError as e:
+        raise HallowError(
+            f"{baseline_path} is outside the repository", code="HALLOW_BASELINE_OUTSIDE_REPO"
+        ) from e
+    text = show_file(top, base.sha, rel)
+    if text is None:
+        _status(f"note: {rel} does not exist at {base.ref}; growth check passes", quiet)
+        return None
+    grown = Counter(load_baseline(baseline_path).entries) - parse_baseline(text).entries
+    return sum(grown.values())
+
+
+def _apply_baseline(
+    results, baseline_path, save_baseline_path, quiet: bool, change_scoped: bool = False
+):
     from hallow.core.baseline import filter_baseline, save_baseline
 
     if save_baseline_path:
@@ -302,7 +399,7 @@ def _apply_baseline(results, baseline_path, save_baseline_path, quiet: bool):
         _status(f"Saved baseline with {count} finding(s) to {save_baseline_path}", quiet)
 
     if baseline_path:
-        results = filter_baseline(results, baseline_path)
+        results = filter_baseline(results, baseline_path, change_scoped=change_scoped)
         st = results.baseline_staleness
         # Printed even under --quiet: a baseline that silently suppresses
         # nothing (or less than it used to) is the failure --quiet would hide.
@@ -463,22 +560,117 @@ def fix(
 def audit(
     root: RootOpt = None,
     config: ConfigOpt = None,
-    changed_since: str = typer.Option(
-        "origin/main", "--changed-since", help="Git ref to diff against (default: origin/main)"
+    changed_since: Annotated[
+        str | None,
+        typer.Option(
+            "--base",
+            "--changed-since",
+            help="Base ref; default: $HALLOW_AUDIT_BASE, then the merge-base with the "
+            "upstream, origin/HEAD, origin/main, origin/master, main or master",
+        ),
+    ] = None,
+    gate: str = typer.Option(
+        "new-only",
+        "--gate",
+        help="new-only: fail only on findings this change introduces; "
+        "all: fail on every finding in changed files",
     ),
     format: str | None = _format_opt(CHECK_FORMATS),
     output_file: OutputOpt = None,
-    ci: CiOpt = False,
-    fail_on_issues: FailOnIssuesOpt = False,
+    ci: Annotated[
+        bool,
+        typer.Option(
+            "--ci", help="Equivalent to --format sarif --quiet (an explicit --format wins)"
+        ),
+    ] = False,
     quiet: QuietOpt = False,
     baseline: BaselineOpt = None,
-    save_baseline: SaveBaselineOpt = None,
 ) -> None:
-    """PR-scoped audit — only flag issues in changed files."""
-    _run_check(
-        root, config, format, output_file, ci, fail_on_issues, quiet, changed_since,
-        None, baseline, save_baseline, False,
-    )  # fmt: skip
+    """Gate a change: fail only on findings it introduces in the files it touches.
+
+    Re-analyses the base commit in a temporary git worktree and compares line-free
+    finding keys. Verdict pass/warn exits 0, fail exits 1. Needs no baseline file.
+    """
+    fmt = (format or "sarif") if ci else format
+    quiet = quiet or ci
+
+    def body() -> int:
+        from hallow.core.audit import GATES, run_audit
+        from hallow.core.gitutil import repo_top, resolve_base
+        from hallow.output.envelope import audit_output
+
+        start = time.monotonic()
+        out_fmt = _check_format(fmt, CHECK_FORMATS)
+        if gate not in GATES:
+            raise HallowError(
+                f"unknown gate '{gate}'; expected one of: {', '.join(GATES)}",
+                code="HALLOW_INVALID_GATE",
+            )
+        cfg = _load_config(root, config)
+        base = resolve_base(repo_top(cfg.root.resolve()), changed_since)
+        result = run_audit(cfg, base, gate, baseline_path=baseline)
+        elapsed = _elapsed_ms(start)
+
+        if out_fmt == "json":
+            _write(audit_output(result, elapsed).model_dump_json(indent=2), output_file)
+        elif out_fmt == "human":
+            _print_audit(result, output_file)
+        else:
+            from hallow.types import AnalysisResults
+
+            gated = AnalysisResults(
+                findings=result.considered, total_files_scanned=result.total_files_scanned
+            )
+            gated.compute_totals()
+            _emit_results(gated, out_fmt, output_file, "check", elapsed, {})
+        return ISSUES if result.verdict == "fail" else 0
+
+    _guarded(fmt, body)
+
+
+def _print_audit(result, output_file: Path | None) -> None:
+    from rich.console import Console
+
+    cm = Path(output_file).open("w") if output_file else contextlib.nullcontext()
+    with cm as fh:
+        console = Console(file=fh, highlight=False)
+        against = result.base.description or result.base.ref
+        console.print(
+            f"Audit scope: {len(result.changed_files)} changed file(s) vs {against}"
+            f" ({result.base.sha[:12]})"
+        )
+        if result.base_snapshot_skipped and result.gate == "new-only":
+            console.print("  [dim]no Python or config change: base not analysed[/dim]")
+        console.print()
+
+        by_file: dict[str, list] = {}
+        for a in result.findings:
+            by_file.setdefault(a.finding.location.file, []).append(a)
+        for path, items in sorted(by_file.items()):
+            console.print(f"[bold]{path}[/bold]")
+            for a in sorted(items, key=lambda x: x.finding.location.line):
+                f = a.finding
+                tag = {True: "[red]new[/red]", False: "[dim]inherited[/dim]", None: ""}[
+                    a.introduced
+                ]
+                style = "bold red" if f.severity.value == "error" else "yellow"
+                icon = "E" if f.severity.value == "error" else "W"
+                console.print(
+                    f"  [{style}]{icon}[/{style}] {tag} [dim]{f.rule.value}[/dim] {f.message}"
+                    f" [dim]{path}:{f.location.line}[/dim]"
+                )
+            console.print()
+
+        mark = {"pass": "[green]✓ pass[/green]", "warn": "[yellow]! warn[/yellow]"}.get(
+            result.verdict, "[bold red]✗ fail[/bold red]"
+        )
+        considered = len(result.considered)
+        line = f"{mark}: {considered} finding(s) gated"
+        if result.gate == "new-only":
+            inherited = sum(1 for a in result.findings if a.introduced is False)
+            if inherited:
+                line += f" · {inherited} inherited excluded (run with --gate all to enforce)"
+        console.print(line)
 
 
 def _run_fix(root: Path | None, config_path: Path | None, dry_run: bool) -> None:

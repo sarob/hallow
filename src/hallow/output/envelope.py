@@ -35,6 +35,7 @@ CHECK_SCHEMA_VERSION = 1
 HEALTH_SCHEMA_VERSION = 1
 DUPES_SCHEMA_VERSION = 1
 PRUNE_SCHEMA_VERSION = 1
+AUDIT_SCHEMA_VERSION = 1
 
 
 class Action(BaseModel):
@@ -144,6 +145,45 @@ class PruneOutput(BaseModel):
     files: list[PruneFile]
 
 
+class AuditFindingOutput(FindingOutput):
+    # true: the change introduced it; false: it existed at the base;
+    # null: --gate all (no attribution)
+    introduced: bool | None = None
+    demotion_reason: str | None = None
+
+
+class AuditSummary(BaseModel):
+    findings: int
+    errors: int
+    warnings: int
+    introduced: int
+    inherited: int
+
+
+class AuditOutput(BaseModel):
+    kind: Literal["audit"] = "audit"
+    schema_version: int = AUDIT_SCHEMA_VERSION
+    version: str = __version__
+    command: Literal["audit"] = "audit"
+    verdict: Literal["pass", "warn", "fail"]
+    gate: Literal["new-only", "all"]
+    base_ref: str
+    # how the base was chosen when not given, e.g. "merge-base with origin/main"
+    base_description: str | None = None
+    merge_base: str
+    head_sha: str | None = None
+    changed_files_count: int
+    changed_files: list[str]
+    # true when the base was not analysed (--gate all, or no Python/config change)
+    base_snapshot_skipped: bool
+    elapsed_ms: int
+    summary: AuditSummary
+    attribution: dict[str, int | str]
+    findings: list[AuditFindingOutput]
+    gate_outcomes: dict[str, GateOutcome] = Field(default_factory=dict)
+    next_steps: list[NextStep] = Field(default_factory=list)
+
+
 class ErrorOutput(BaseModel):
     """Printed on stdout instead of a document when a `--format json` run fails."""
 
@@ -159,6 +199,7 @@ OUTPUT_MODELS: list[type[BaseModel]] = [
     HealthOutput,
     DupesOutput,
     PruneOutput,
+    AuditOutput,
     ErrorOutput,
 ]
 
@@ -251,6 +292,65 @@ def findings_gate(findings: list[Finding], fail_on_issues: bool) -> GateOutcome:
     else:
         status = "pass"
     return GateOutcome(status=status, enforced=True, observed=observed)
+
+
+def baseline_growth_gate(added: int | None, enforced: bool) -> GateOutcome:
+    """Fails when the baseline file holds entries its version at the base did not."""
+    if added is None:
+        return GateOutcome(status="skipped", enforced=enforced)
+    return GateOutcome(status="fail" if added else "pass", enforced=enforced, observed=added)
+
+
+def audit_output(result, elapsed_ms: int) -> AuditOutput:
+    """Build the `audit` document from a hallow.core.audit.AuditResult."""
+    findings = [a.finding for a in result.findings]
+    introduced = sum(1 for a in result.findings if a.introduced)
+    inherited = sum(1 for a in result.findings if a.introduced is False)
+    steps: list[NextStep] = []
+    if result.gate == "new-only" and inherited:
+        steps.append(
+            NextStep(
+                id="audit-all",
+                command=f"hallow audit --base {result.base.ref} --gate all",
+                reason=f"{inherited} inherited finding(s) in changed files are not gated",
+            )
+        )
+    return AuditOutput(
+        verdict=result.verdict,
+        gate=result.gate,
+        base_ref=result.base.ref,
+        base_description=result.base.description,
+        merge_base=result.base.sha,
+        head_sha=result.head_sha,
+        changed_files_count=len(result.changed_files),
+        changed_files=result.changed_files,
+        base_snapshot_skipped=result.base_snapshot_skipped,
+        elapsed_ms=elapsed_ms,
+        summary=AuditSummary(
+            findings=len(findings),
+            errors=sum(1 for f in findings if f.severity == Severity.ERROR),
+            warnings=sum(1 for f in findings if f.severity == Severity.WARN),
+            introduced=introduced,
+            inherited=inherited,
+        ),
+        attribution=result.attribution,
+        findings=[
+            AuditFindingOutput(
+                **finding_output(a.finding).model_dump(),
+                introduced=a.introduced,
+                demotion_reason=a.demotion_reason,
+            )
+            for a in result.findings
+        ],
+        gate_outcomes={
+            "audit": GateOutcome(
+                status=result.verdict,
+                enforced=True,
+                observed=len(result.considered),
+            )
+        },
+        next_steps=steps,
+    )
 
 
 def stale_baseline_gate(staleness: BaselineStaleness | None, enforced: bool) -> GateOutcome:
