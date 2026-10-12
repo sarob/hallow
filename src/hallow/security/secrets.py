@@ -160,15 +160,23 @@ def _enum_label_positions(source: str) -> set[tuple[int, int]]:
 
     # A name trusted as an enum base must be bound exactly once in the file
     # (by its import or class statement). Any other binding anywhere —
-    # `Base = object`, a def, another import — and the name is not trusted;
-    # the label is then reported, the safe direction.
+    # `Base = object`, a def, a parameter, another import, even in an
+    # unrelated scope — and the name is not trusted; the label is then
+    # reported, the safe direction (no scope resolution is attempted).
     bindings: dict[str, int] = {}
     for node in ast.walk(tree):
         names: list[str] = []
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names = [node.id]
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names = [node.name]
+        elif isinstance(node, ast.arg):  # function and lambda parameters
+            names = [node.arg]
+        elif isinstance(
+            node,
+            (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)
+            + (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            # except-as, match captures, def/class names (None when unnamed)
+            names = [node.name] if node.name else []
         elif isinstance(node, (ast.Import, ast.ImportFrom)):
             names = [(a.asname or a.name).split(".")[0] for a in node.names]
         for name in names:
@@ -198,6 +206,7 @@ def _enum_label_positions(source: str) -> set[tuple[int, int]]:
                     enum_names.add(cls.name)
                 changed = True
 
+    lines = source.splitlines()
     positions: set[tuple[int, int]] = set()
     for cls in enum_classes:
         for stmt in cls.body:
@@ -210,10 +219,15 @@ def _enum_label_positions(source: str) -> set[tuple[int, int]]:
                 and isinstance(value.value, str)
                 and _norm(value.value) == _norm(target.id)
             ):
-                # col_offset counts UTF-8 bytes; it equals the str index for
-                # ASCII lines. A mismatch only makes the label reportable.
-                positions.add((value.lineno, value.col_offset))
+                positions.add((value.lineno, _char_col(lines, value.lineno, value.col_offset)))
     return positions
+
+
+def _char_col(lines: list[str], lineno: int, byte_col: int) -> int:
+    """ast col_offset counts UTF-8 bytes; the regex matches count characters."""
+    if not 1 <= lineno <= len(lines):
+        return -1
+    return len(lines[lineno - 1].encode("utf-8")[:byte_col].decode("utf-8", errors="ignore"))
 
 
 def _norm(text: str) -> str:
