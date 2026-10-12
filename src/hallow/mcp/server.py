@@ -111,8 +111,9 @@ _RULE_EXPLANATIONS = {
         "Detects import cycles using Tarjan's strongly connected components algorithm."
     ),
     "duplicate-code": (
-        "Finds cloned code blocks via tokenization and rolling hash. "
-        "Supports strict, mild, weak, and semantic modes."
+        "Finds cloned code blocks by hashing fixed-size token windows. Modes: strict and "
+        "mild (exact tokens), weak (string values ignored), semantic (identifiers and "
+        "literals ignored)."
     ),
     "high-complexity": (
         "Flags functions exceeding cyclomatic or cognitive complexity "

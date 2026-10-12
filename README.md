@@ -130,8 +130,8 @@ Nine modules mirroring Fallow's crate structure:
 - Complexity hotspot identification
 
 **Duplication**
-- Clone detection via tokenization + suffix array + LCP
-- Four modes: strict (exact), mild (normalized identifiers), weak (structure only), semantic
+- Clone detection by hashing fixed-size token windows and extending each match to its longest common run
+- Four modes, matching fallow's: strict and mild (exact tokens; comments and whitespace are never tokens), weak (string values ignored), semantic (identifiers, strings and numbers ignored, so renamed copies match)
 
 **Circular dependencies**
 - Detection via Tarjan's strongly connected components
