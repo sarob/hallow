@@ -34,3 +34,40 @@ def test_cycles_and_duplicates_are_not_counted_twice():
     )
     results.compute_totals()
     assert results.total_issues == 2 == results.errors + results.warnings
+
+
+def _cycle_and_clone_project(root):
+    block = "\n".join(f"    v{i} = compute({i}) + offset_{i}" for i in range(20))
+    (root / "a.py").write_text(f"import b\ndef fa():\n{block}\n")
+    (root / "b.py").write_text(f"import a\ndef fb():\n{block}\n")
+
+
+def test_totals_through_analysis_count_each_reported_finding_once(tmp_path):
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    _cycle_and_clone_project(tmp_path)
+    cfg = HallowConfig(root=tmp_path)
+    cfg.duplicates.min_tokens = 30
+    results = analyze(cfg)
+    rules = [f.rule.value for f in results.findings]
+    assert results.cycles and results.duplicates
+    assert rules.count("circular-dependencies") == len(results.cycles)
+    assert rules.count("duplicate-code") == len(results.duplicates)
+    assert results.total_issues == len(results.findings) == results.errors + results.warnings
+
+
+def test_disabled_rules_leave_data_but_no_issues(tmp_path):
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    _cycle_and_clone_project(tmp_path)
+    cfg = HallowConfig(root=tmp_path)
+    cfg.duplicates.min_tokens = 30
+    cfg.rules.overrides["circular-dependencies"] = Severity.OFF
+    cfg.rules.overrides["duplicate-code"] = Severity.OFF
+    results = analyze(cfg)
+    assert results.cycles and results.duplicates  # supporting data kept
+    rules = {f.rule.value for f in results.findings}
+    assert not {"circular-dependencies", "duplicate-code"} & rules
+    assert results.total_issues == len(results.findings)
