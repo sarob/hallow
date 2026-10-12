@@ -22,7 +22,7 @@ is, and the base analysis is skipped.
 
 from __future__ import annotations
 
-from collections import Counter
+from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -123,18 +123,44 @@ def _touches_added_line(f: Finding, changes: ChangeSet) -> bool:
     return False
 
 
+def match_complexity(base_values: list[int], head_values: list[int]) -> list[bool]:
+    """For findings sharing one complexity key: is each head occurrence introduced?
+
+    Each base occurrence covers at most one head occurrence. Highest head
+    values are matched first, each to the smallest remaining base value at
+    least as high (inherited). A head value above every remaining base value
+    is a rise (introduced) and consumes the highest remaining base value; a
+    head occurrence with no base value left is new (introduced). Returned in
+    the order of `head_values`.
+    """
+    pool = sorted(base_values)
+    result: dict[int, bool] = {}
+    for i in sorted(range(len(head_values)), key=lambda i: -head_values[i]):
+        h = head_values[i]
+        fit = next((j for j, b in enumerate(pool) if b >= h), None)
+        if fit is not None:
+            pool.pop(fit)
+            result[i] = False
+        else:
+            if pool:
+                pool.pop()
+            result[i] = True
+    return [result[i] for i in range(len(head_values))]
+
+
 def run_audit(cfg: HallowConfig, base: BaseRef, gate: str, baseline_path: Path | None = None):
-    """Run the audit. `base` comes from gitutil.resolve_base."""
+    """Run the audit. `base` comes from gitutil.resolve_base.
+
+    Attribution runs on the unfiltered head findings; a `--baseline` is
+    applied afterwards and consumes inherited occurrences before introduced
+    ones, so baseline credit never lets an added occurrence pass as inherited.
+    """
     root = cfg.root.resolve()
     top = repo_top(root)
     changes = collect_changes(top, root, base.sha)
     head_sha = git(top, "rev-parse", "HEAD").strip() or None
 
     head = analyze(cfg)
-    if baseline_path is not None:
-        from hallow.core.baseline import filter_baseline
-
-        head = filter_baseline(head, baseline_path, change_scoped=True)
     scoped = [f for f in head.findings if finding_files(f) & changes.files]
 
     skipped = gate == "all" or not _needs_base(changes)
@@ -146,25 +172,35 @@ def run_audit(cfg: HallowConfig, base: BaseRef, gate: str, baseline_path: Path |
     else:
         base_findings = _analyze_base(cfg, top, root, base.sha)
         remaining: Counter[str] = Counter()
-        base_metric: dict[str, int] = {}
+        base_metric: dict[str, list[int]] = defaultdict(list)
         for bf in base_findings:
             key = canonical_key(bf, changes.renames)
-            remaining[key] += 1
             if bf.rule == RuleId.HIGH_COMPLEXITY:
-                base_metric[key] = max(base_metric.get(key, 0), _metric(bf))
-
-        for f in sorted(scoped, key=lambda x: (x.location.file, x.location.line)):
-            if f.rule == RuleId.HIGH_COMPLEXITY:
-                introduced = f.key not in base_metric or _metric(f) > base_metric[f.key]
-                audited.append(AuditFinding(f, introduced))
-                continue
-            if remaining[f.key] > 0:
-                remaining[f.key] -= 1
-                audited.append(AuditFinding(f, False))
-            elif f.rule == RuleId.DUPLICATE_CODE and not _touches_added_line(f, changes):
-                audited.append(AuditFinding(f, False, "no-added-lines"))
+                base_metric[key].append(_metric(bf))
             else:
-                audited.append(AuditFinding(f, True))
+                remaining[key] += 1
+
+        ordered = sorted(scoped, key=lambda x: (x.location.file, x.location.line))
+        complexity: dict[str, list[Finding]] = defaultdict(list)
+        verdicts: dict[int, AuditFinding] = {}
+        for f in ordered:
+            if f.rule == RuleId.HIGH_COMPLEXITY:
+                complexity[f.key].append(f)
+            elif remaining[f.key] > 0:
+                remaining[f.key] -= 1
+                verdicts[id(f)] = AuditFinding(f, False)
+            elif f.rule == RuleId.DUPLICATE_CODE and not _touches_added_line(f, changes):
+                verdicts[id(f)] = AuditFinding(f, False, "no-added-lines")
+            else:
+                verdicts[id(f)] = AuditFinding(f, True)
+        for key, group in complexity.items():
+            flags = match_complexity(base_metric.get(key, []), [_metric(f) for f in group])
+            for f, introduced in zip(group, flags, strict=True):
+                verdicts[id(f)] = AuditFinding(f, introduced)
+        audited = [verdicts[id(f)] for f in ordered]
+
+    if baseline_path is not None:
+        audited = _apply_baseline(audited, baseline_path)
 
     result = AuditResult(
         verdict="pass",
@@ -179,6 +215,22 @@ def run_audit(cfg: HallowConfig, base: BaseRef, gate: str, baseline_path: Path |
     result.verdict = _verdict(result.considered)
     result.attribution = _attribution(audited, gate)
     return result
+
+
+def _apply_baseline(audited: list[AuditFinding], baseline_path: Path) -> list[AuditFinding]:
+    """Drop baselined findings, spending each entry on an inherited occurrence first."""
+    from hallow.core.baseline import load_baseline
+
+    remaining = Counter(load_baseline(baseline_path).entries)
+    keep: list[AuditFinding] = []
+    # inherited (False) and unattributed (None) before introduced (True)
+    for a in sorted(audited, key=lambda a: a.introduced is True):
+        if remaining[a.finding.key] > 0:
+            remaining[a.finding.key] -= 1
+        else:
+            keep.append(a)
+    order = {id(a): i for i, a in enumerate(audited)}
+    return sorted(keep, key=lambda a: order[id(a)])
 
 
 def _analyze_base(cfg: HallowConfig, top: Path, root: Path, sha: str) -> list[Finding]:

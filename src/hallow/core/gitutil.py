@@ -67,7 +67,13 @@ def resolve_base(top: Path, explicit: str | None) -> BaseRef:
     """
     given = explicit or os.environ.get(BASE_ENV) or None
     if given:
-        sha = _ok(top, "merge-base", given, "HEAD")
+        # A leading `-` would be read by git as an option, not a revision.
+        commit = (
+            None
+            if given.startswith("-")
+            else _ok(top, "rev-parse", "--verify", "--quiet", f"{given}^{{commit}}")
+        )
+        sha = _ok(top, "merge-base", commit, "HEAD") if commit else None
         if not sha:
             raise HallowError(f"cannot resolve base '{given}' against HEAD", code="HALLOW_BAD_BASE")
         return BaseRef(ref=given, sha=sha)
@@ -139,18 +145,26 @@ def collect_changes(top: Path, root: Path, base_sha: str) -> ChangeSet:
             cs.files.add(p)
             cs.untracked.add(p)
 
-    current: str | None = None
-    for line in git(
-        top, "diff", "-U0", "--no-color", "--find-renames", base_sha, "--"
-    ).splitlines():
-        if line.startswith("+++ "):
-            target = line[4:]
-            current = _to_root(target[2:], prefix) if target.startswith("b/") else None
+    # Added lines per changed Python file, one `git diff` per file under a
+    # literal pathspec: file names never have to be parsed back out of patch
+    # headers, which git quotes (non-ASCII, tabs, quotes) or re-prefixes
+    # (diff.noprefix, diff.mnemonicPrefix).
+    old_for = {new: old for old, new in cs.renames.items()}
+    for p in sorted(cs.files - cs.untracked):
+        if not p.endswith(".py"):
             continue
-        m = _HUNK_RE.match(line)
-        if m and current is not None:
-            start, count = int(m.group(1)), int(m.group(2) or "1")
-            cs.added_lines.setdefault(current, set()).update(range(start, start + count))
+        specs = [f":(literal){prefix}{p}"]
+        if p in old_for:
+            specs.insert(0, f":(literal){prefix}{old_for[p]}")
+        patch = git(
+            top, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff",
+            "--find-renames", base_sha, "--", *specs,
+        )  # fmt: skip
+        for line in patch.splitlines():
+            m = _HUNK_RE.match(line)
+            if m:
+                start_line, count = int(m.group(1)), int(m.group(2) or "1")
+                cs.added_lines.setdefault(p, set()).update(range(start_line, start_line + count))
     for p in cs.untracked:
         try:
             n = len((root / p).read_text(encoding="utf-8", errors="replace").splitlines())
@@ -165,8 +179,10 @@ def worktree(top: Path, sha: str) -> Iterator[Path]:
     """A temporary detached checkout of `sha`, removed afterwards."""
     tmp = Path(tempfile.mkdtemp(prefix="hallow-base-"))
     path = tmp / "base"
-    git(top, "worktree", "add", "--detach", "--quiet", str(path), sha)
     try:
+        # inside the try: a failed `worktree add` still removes the temp dir
+        # and prunes any half-registered worktree
+        git(top, "worktree", "add", "--detach", "--quiet", str(path), sha)
         yield path
     finally:
         _ok(top, "worktree", "remove", "--force", str(path))

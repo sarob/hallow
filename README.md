@@ -254,6 +254,8 @@ app/payments.py
 - an introduced clone group none of whose fragments contains an added line is demoted to inherited
 - a change touching no Python file, dependency file or hallow config skips the base analysis
 
+Scope limits: audit gates findings located in changed files, so a finding a change causes in an *unchanged* file (deleting the last caller makes an untouched function unused) is not gated — run `hallow check` for that. A rename across the `--root` boundary is not mapped. With `--baseline`, entries are spent on inherited occurrences before introduced ones.
+
 The **verdict** is `fail` (exit 1) if a gated finding is error-severity, `warn` (exit 0) if one is warn-severity, else `pass`. `--gate new-only` (default) gates introduced findings; `--gate all` gates every finding in changed files and skips the base analysis.
 
 The base is `--base <ref>` (alias `--changed-since`), else `$HALLOW_AUDIT_BASE`, else the merge-base of HEAD with the branch's upstream, `origin/HEAD`, `origin/main`, `origin/master`, `main` or `master`; with none, audit exits 2. In CI, check out with full history (`fetch-depth: 0`). The JSON document (`kind: "audit"`) carries `verdict`, `base_ref`, `merge_base`, `changed_files`, per-category `attribution` and `introduced` on every finding; `--format sarif|github|...` emits only the gated findings.

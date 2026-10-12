@@ -219,3 +219,72 @@ def test_change_scoped_runs_do_not_warn_about_unchanged_baseline_entries(repo: P
     (repo / "helper.py").write_text("def run(): ...\n")
     full = runner.invoke(app, ["check", "--root", str(repo), "--baseline", str(b)])
     assert "is stale" in full.stderr
+
+
+# ── review of #23 ──
+
+
+def test_baseline_credit_does_not_hide_an_added_occurrence(repo: Path):
+    # base: one unused `json` in helper.py, and a baseline holding that entry.
+    b = repo / "b.json"
+    runner.invoke(app, ["check", "--root", str(repo), "--save-baseline", str(b), "-q"])
+    _commit(repo, "baseline")
+    # head: a second unused `json` (a new occurrence of the same key)
+    (repo / "helper.py").write_text(
+        "import json\n\ndef run(): ...\n\ndef other():\n    import json\n"
+    )
+    code, doc = _audit(repo, "--baseline", str(b))
+    unused = [f for f in doc["findings"] if f["rule"] == "unused-imports"]
+    assert [f["introduced"] for f in unused] == [True]
+    assert code == 1
+
+
+def test_clone_in_a_quoted_filename_is_not_demoted(repo: Path):
+    block = "\n".join(f"    total_{i} = compute(value_{i}) + offset_{i}" for i in range(16))
+    (repo / "orig.py").write_text(f"def a():\n{block}\n")
+    _commit(repo, "orig")
+    _git(repo, "branch", "-f", "main", "HEAD")
+    # a tracked file whose name git quotes in patch headers (non-ASCII)
+    (repo / "naïve copy.py").write_text(f"def b():\n{block}\n")
+    _commit(repo, "copy")
+    cfg = repo / ".hallowrc.toml"
+    cfg.write_text("[duplicates]\nmin_tokens = 30\n")
+    code, doc = _audit(repo, "--config", str(cfg))
+    clones = [f for f in doc["findings"] if f["rule"] == "duplicate-code"]
+    assert clones and all(f["introduced"] is True for f in clones), clones
+    assert all(f.get("demotion_reason") is None for f in clones)
+
+
+def test_leading_dash_base_is_rejected(repo: Path, monkeypatch):
+    for args in (["--base=--octopus"], []):
+        if not args:
+            monkeypatch.setenv("HALLOW_AUDIT_BASE", "--all")
+        r = runner.invoke(app, ["audit", "--root", str(repo), "-f", "json", *args])
+        assert r.exit_code == 2
+        assert json.loads(r.stdout)["code"] == "HALLOW_BAD_BASE"
+
+
+def test_failed_worktree_setup_leaves_nothing_behind(repo: Path):
+    import tempfile
+
+    from hallow.core.gitutil import worktree
+    from hallow.exit_codes import HallowError
+
+    tmp = Path(tempfile.gettempdir())
+    before = set(tmp.glob("hallow-base-*"))
+    with pytest.raises(HallowError), worktree(repo, "0" * 40):
+        pass
+    assert set(tmp.glob("hallow-base-*")) == before
+    assert _git(repo, "worktree", "list").count("\n") == 1
+
+
+def test_repeated_complexity_keys_match_occurrence_by_occurrence():
+    from hallow.core.audit import match_complexity
+
+    assert match_complexity([30], [25]) == [False]  # dropped: inherited
+    assert match_complexity([30], [31]) == [True]  # rose: introduced
+    # two head occurrences cannot both inherit from one base occurrence
+    assert match_complexity([30], [25, 25]) == [False, True]
+    # one occurrence's rise is not masked by another's larger base value
+    assert match_complexity([10, 40], [12, 39]) == [True, False]
+    assert match_complexity([], [21]) == [True]
