@@ -287,10 +287,10 @@ Scripts and agents should use `--format json`. Each command writes one document 
 
 - `kind` (`check`, `security`, `health`, `dupes`, `baselines-prune`), `schema_version`, `version`, `elapsed_ms`
 - `gate_outcomes` — each gate's `status` (`pass`/`warn`/`fail`/`skipped`) and whether it is `enforced`; the run exits 1 when an enforced gate fails
-- `next_steps[]` — `{id, command, reason}`, read-only commands that run as written
+- `next_steps[]` — `{id, command, reason}`, read-only commands, shell-quoted and carrying the run's `--root`/`--config`, that run as written from any directory
 - per finding: `finding_id`, `rule`, `severity`, `location`, `symbol` and `actions[]` (`{type, auto_fixable, description, ...}`; `auto_fixable` says whether `hallow fix` applies it)
 
-An error under `--format json` is a document on stdout, not a traceback: `{"error": true, "message": "...", "exit_code": 2, "code": "..."}`.
+An error raised while a command runs (unreadable config, unwritable `--output`, unknown `--format`, a refused baseline) is, under `--format json`, a document on stdout rather than a traceback: `{"error": true, "message": "...", "exit_code": 2, "code": "..."}`. Command-line usage errors caught by the argument parser (an unknown option, an invalid `--boundaries` value, options placed before the command) exit 2 with a text message on stderr.
 
 `hallow schema` prints every command, flag, output format, exit code and rule as JSON. `hallow schema --output-schema` prints the JSON Schema of every document, committed as [`docs/output-schema.json`](docs/output-schema.json).
 

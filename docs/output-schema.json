@@ -191,6 +191,25 @@
           "title": "Version",
           "type": "string"
         },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
         "command": {
           "const": "audit",
           "default": "audit",
@@ -261,10 +280,6 @@
           "title": "Base Snapshot Skipped",
           "type": "boolean"
         },
-        "elapsed_ms": {
-          "title": "Elapsed Ms",
-          "type": "integer"
-        },
         "summary": {
           "$ref": "#/$defs/AuditSummary"
         },
@@ -288,20 +303,6 @@
           },
           "title": "Findings",
           "type": "array"
-        },
-        "gate_outcomes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/GateOutcome"
-          },
-          "title": "Gate Outcomes",
-          "type": "object"
-        },
-        "next_steps": {
-          "items": {
-            "$ref": "#/$defs/NextStep"
-          },
-          "title": "Next Steps",
-          "type": "array"
         }
       },
       "required": [
@@ -312,7 +313,6 @@
         "changed_files_count",
         "changed_files",
         "base_snapshot_skipped",
-        "elapsed_ms",
         "summary",
         "attribution",
         "findings"
@@ -435,8 +435,23 @@
           "type": "string"
         },
         "elapsed_ms": {
+          "default": 0,
           "title": "Elapsed Ms",
           "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
         },
         "summary": {
           "$ref": "#/$defs/Summary"
@@ -483,25 +498,10 @@
             }
           ],
           "default": null
-        },
-        "gate_outcomes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/GateOutcome"
-          },
-          "title": "Gate Outcomes",
-          "type": "object"
-        },
-        "next_steps": {
-          "items": {
-            "$ref": "#/$defs/NextStep"
-          },
-          "title": "Next Steps",
-          "type": "array"
         }
       },
       "required": [
         "kind",
-        "elapsed_ms",
         "summary",
         "findings"
       ],
@@ -527,8 +527,23 @@
           "type": "string"
         },
         "elapsed_ms": {
+          "default": 0,
           "title": "Elapsed Ms",
           "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
         },
         "mode": {
           "title": "Mode",
@@ -547,24 +562,9 @@
           },
           "title": "Findings",
           "type": "array"
-        },
-        "gate_outcomes": {
-          "additionalProperties": {
-            "$ref": "#/$defs/GateOutcome"
-          },
-          "title": "Gate Outcomes",
-          "type": "object"
-        },
-        "next_steps": {
-          "items": {
-            "$ref": "#/$defs/NextStep"
-          },
-          "title": "Next Steps",
-          "type": "array"
         }
       },
       "required": [
-        "elapsed_ms",
         "mode",
         "clone_groups",
         "findings"
@@ -864,8 +864,23 @@
           "type": "string"
         },
         "elapsed_ms": {
+          "default": 0,
           "title": "Elapsed Ms",
           "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
         },
         "project": {
           "$ref": "#/$defs/ProjectHealth"
@@ -876,17 +891,9 @@
           },
           "title": "Files",
           "type": "array"
-        },
-        "next_steps": {
-          "items": {
-            "$ref": "#/$defs/NextStep"
-          },
-          "title": "Next Steps",
-          "type": "array"
         }
       },
       "required": [
-        "elapsed_ms",
         "project",
         "files"
       ],
@@ -1139,6 +1146,25 @@
           "default": "0.1.0",
           "title": "Version",
           "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
         },
         "check": {
           "title": "Check",

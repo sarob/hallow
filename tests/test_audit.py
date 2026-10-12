@@ -54,6 +54,9 @@ def test_inherited_finding_in_touched_file_passes(repo: Path):
     assert (f["rule"], f["introduced"]) == ("unused-imports", False)
     assert doc["attribution"]["dead_code_inherited"] == 1
     assert doc["next_steps"][0]["id"] == "audit-all"
+    # the shared document envelope, and a next step that targets this project
+    assert {"kind", "schema_version", "version", "elapsed_ms", "gate_outcomes"} <= set(doc)
+    assert "--root" in doc["next_steps"][0]["command"]
 
 
 def test_introduced_finding_fails(repo: Path):

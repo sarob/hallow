@@ -14,6 +14,7 @@ runner = CliRunner()
 
 
 def _project(tmp_path: Path, helper: str = "import json\ndef run(): ...\n") -> Path:
+    tmp_path.mkdir(parents=True, exist_ok=True)
     (tmp_path / "main.py").write_text("import helper\nhelper.run()\n")
     (tmp_path / "helper.py").write_text(helper)
     return tmp_path
@@ -68,11 +69,7 @@ def test_json_document_root_fields(tmp_path: Path):
     assert types == ["remove-import", "suppress-line"]
     assert finding["actions"][0]["auto_fixable"] is True
     assert finding["actions"][1]["comment"] == "# hallow-ignore unused-imports"
-    assert doc["next_steps"][0] == {
-        "id": "preview-fixes",
-        "command": "hallow fix --dry-run",
-        "reason": "Some findings are auto-fixable; preview the changes",
-    }
+    assert doc["next_steps"][0]["id"] == "preview-fixes"
 
 
 def test_ci_is_sarif_fail_on_issues_quiet_and_explicit_format_wins(tmp_path: Path):
@@ -162,3 +159,100 @@ def test_committed_output_schema_is_current():
         "docs/output-schema.json is stale: run `hallow schema --output-schema > "
         "docs/output-schema.json`"
     )
+
+
+# ── review of #22 ──
+
+import shlex  # noqa: E402
+
+ENVELOPE_FIELDS = {"kind", "schema_version", "version", "elapsed_ms", "gate_outcomes", "next_steps"}
+
+
+def test_next_steps_run_as_written_from_another_directory(tmp_path: Path, monkeypatch):
+    # commands carry --root/--config and are shell-quoted (a baseline path with a space)
+    root = _project(tmp_path / "proj")
+    cfg = tmp_path / "my config.toml"
+    cfg.write_text('[rules]\nhigh-complexity = "warn"\n')
+    b = tmp_path / "base line.json"
+    runner.invoke(app, ["check", "--root", str(root), "-c", str(cfg), "--save-baseline", str(b)])
+    (root / "helper.py").write_text("def run(): ...\n")
+    code, doc = _json(
+        ["check", "--root", str(root), "-c", str(cfg), "--baseline", str(b), "-f", "json"]
+    )
+    steps = {s["id"]: s["command"] for s in doc["next_steps"]}
+    assert "prune-baseline" in steps
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    for command in steps.values():
+        argv = shlex.split(command)
+        assert argv[0] == "hallow" and "--root" in argv and "--config" in argv
+        result = runner.invoke(app, argv[1:])
+        assert result.exit_code in (0, 1), (command, result.output)
+
+
+def test_ci_fails_on_warnings_only(tmp_path: Path):
+    root = _project(tmp_path, "def run(): ...\nLIMIT = 3\n")
+    (root / "main.py").write_text("from helper import run\nrun()\n")  # only unused-variables (warn)
+    assert runner.invoke(app, ["check", "--root", str(root)]).exit_code == 0
+    assert runner.invoke(app, ["check", "--root", str(root), "--ci"]).exit_code == 1
+
+
+def test_every_document_kind_has_the_envelope_fields(tmp_path: Path):
+    root = _project(tmp_path / "p")
+    b = tmp_path / "b.json"
+    runner.invoke(app, ["check", "--root", str(root), "--save-baseline", str(b), "-q"])
+    for args in (
+        ["check"], ["security"], ["health"], ["dupes"],
+        ["baselines", "prune", "--baseline", str(b), "--check"],
+    ):  # fmt: skip
+        _, doc = _json([*args, "--root", str(root), "-f", "json"])
+        assert set(doc) >= ENVELOPE_FIELDS, (args, set(doc))
+    _, prune = _json(
+        ["baselines", "prune", "--baseline", str(b), "--check", "--root", str(root), "-f", "json"]
+    )
+    assert prune["gate_outcomes"]["prune-check"]["enforced"] is True
+
+
+def test_io_errors_are_json_error_documents(tmp_path: Path):
+    root = _project(tmp_path / "p")
+    out_dir = tmp_path / "out"
+    out_dir.mkdir()
+    code, doc = _json(["check", "--root", str(root), "-f", "json", "-o", str(out_dir)])
+    assert code == 2
+    assert doc["error"] is True and doc["code"] == "HALLOW_IO_ERROR"
+
+
+def test_refused_prune_is_an_error_document(tmp_path: Path):
+    bad = tmp_path / "b.json"
+    bad.write_text('{"version": 1, "findings": []}')
+    code, doc = _json(
+        ["baselines", "prune", "--baseline", str(bad), "--root", str(tmp_path), "-f", "json"]
+    )
+    assert (code, doc["code"]) == (2, "HALLOW_BASELINE_REFUSED")
+
+
+def test_mcp_analyze_reports_the_findings_gate(tmp_path: Path):
+    from hallow.mcp.server import _dispatch_tool
+
+    doc = _dispatch_tool("analyze", {"root": str(_project(tmp_path))})
+    assert doc["gate_outcomes"]["findings"]["status"] == "fail"
+
+
+def test_dupes_honours_suppressions(tmp_path: Path):
+    block = "\n".join(f"    v{i} = compute({i}) + offset_{i}" for i in range(20))
+    (tmp_path / "a.py").write_text(f"# hallow-ignore-file duplicate-code\ndef fa():\n{block}\n")
+    (tmp_path / "b.py").write_text(f"# hallow-ignore-file duplicate-code\ndef fb():\n{block}\n")
+    code, doc = _json(
+        ["dupes", "--root", str(tmp_path), "--min-tokens", "30", "-f", "json", "--fail-on-issues"]
+    )
+    assert doc["findings"] == [] and code == 0
+    assert doc["clone_groups"]  # the data is still reported
+
+
+def test_manifest_publishes_allowed_values():
+    doc = json.loads(runner.invoke(app, ["schema"]).stdout)
+    flags = {c["name"]: {f["name"]: f for f in c["flags"]} for c in doc["commands"]}
+    assert flags["dupes"]["--mode"]["possible_values"] == ["strict", "mild", "weak", "semantic"]
+    assert "sarif" in flags["check"]["--format"]["possible_values"]
+    assert flags["health"]["--format"]["possible_values"] == ["human", "json"]

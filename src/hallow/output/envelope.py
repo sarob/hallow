@@ -13,6 +13,8 @@ models (`hallow schema --output-schema`).
 
 from __future__ import annotations
 
+import shlex
+from dataclasses import dataclass
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -85,41 +87,43 @@ class Summary(BaseModel):
     warnings: int
 
 
-class CheckOutput(BaseModel):
+class Envelope(BaseModel):
+    """Root fields every `--format json` document carries."""
+
+    kind: str
+    schema_version: int
+    version: str = __version__
+    elapsed_ms: int = 0
+    # which gates ran; the run exits 1 when one has status "fail" and is enforced
+    gate_outcomes: dict[str, GateOutcome] = Field(default_factory=dict)
+    # read-only commands, shell-quoted, that run as written from any directory
+    next_steps: list[NextStep] = Field(default_factory=list)
+
+
+class CheckOutput(Envelope):
     kind: Literal["check", "security"]
     schema_version: int = CHECK_SCHEMA_VERSION
-    version: str = __version__
-    elapsed_ms: int
     summary: Summary
     findings: list[FindingOutput]
     cycles: list[ImportCycle] = Field(default_factory=list)
     duplicates: list[DuplicateGroup] = Field(default_factory=list)
     health: ProjectHealth | None = None
     baseline_staleness: BaselineStaleness | None = None
-    gate_outcomes: dict[str, GateOutcome] = Field(default_factory=dict)
-    next_steps: list[NextStep] = Field(default_factory=list)
 
 
-class HealthOutput(BaseModel):
+class HealthOutput(Envelope):
     kind: Literal["health"] = "health"
     schema_version: int = HEALTH_SCHEMA_VERSION
-    version: str = __version__
-    elapsed_ms: int
     project: ProjectHealth
     files: list[FileHealth]
-    next_steps: list[NextStep] = Field(default_factory=list)
 
 
-class DupesOutput(BaseModel):
+class DupesOutput(Envelope):
     kind: Literal["dupes"] = "dupes"
     schema_version: int = DUPES_SCHEMA_VERSION
-    version: str = __version__
-    elapsed_ms: int
     mode: str
     clone_groups: list[DuplicateGroup]
     findings: list[FindingOutput]
-    gate_outcomes: dict[str, GateOutcome] = Field(default_factory=dict)
-    next_steps: list[NextStep] = Field(default_factory=list)
 
 
 class PruneRemoved(BaseModel):
@@ -137,10 +141,9 @@ class PruneFile(BaseModel):
     reason: str | None = None
 
 
-class PruneOutput(BaseModel):
+class PruneOutput(Envelope):
     kind: Literal["baselines-prune"] = "baselines-prune"
     schema_version: int = PRUNE_SCHEMA_VERSION
-    version: str = __version__
     check: bool
     files: list[PruneFile]
 
@@ -160,10 +163,9 @@ class AuditSummary(BaseModel):
     inherited: int
 
 
-class AuditOutput(BaseModel):
+class AuditOutput(Envelope):
     kind: Literal["audit"] = "audit"
     schema_version: int = AUDIT_SCHEMA_VERSION
-    version: str = __version__
     command: Literal["audit"] = "audit"
     verdict: Literal["pass", "warn", "fail"]
     gate: Literal["new-only", "all"]
@@ -176,12 +178,9 @@ class AuditOutput(BaseModel):
     changed_files: list[str]
     # true when the base was not analysed (--gate all, or no Python/config change)
     base_snapshot_skipped: bool
-    elapsed_ms: int
     summary: AuditSummary
     attribution: dict[str, int | str]
     findings: list[AuditFindingOutput]
-    gate_outcomes: dict[str, GateOutcome] = Field(default_factory=dict)
-    next_steps: list[NextStep] = Field(default_factory=list)
 
 
 class ErrorOutput(BaseModel):
@@ -301,7 +300,7 @@ def baseline_growth_gate(added: int | None, enforced: bool) -> GateOutcome:
     return GateOutcome(status="fail" if added else "pass", enforced=enforced, observed=added)
 
 
-def audit_output(result, elapsed_ms: int) -> AuditOutput:
+def audit_output(result, elapsed_ms: int, ctx: RunContext | None = None) -> AuditOutput:
     """Build the `audit` document from a hallow.core.audit.AuditResult."""
     findings = [a.finding for a in result.findings]
     introduced = sum(1 for a in result.findings if a.introduced)
@@ -311,7 +310,9 @@ def audit_output(result, elapsed_ms: int) -> AuditOutput:
         steps.append(
             NextStep(
                 id="audit-all",
-                command=f"hallow audit --base {result.base.ref} --gate all",
+                command=(ctx or RunContext()).command(
+                    "audit", "--base", result.base.ref, "--gate", "all"
+                ),
                 reason=f"{inherited} inherited finding(s) in changed files are not gated",
             )
         )
@@ -364,13 +365,31 @@ def stale_baseline_gate(staleness: BaselineStaleness | None, enforced: bool) -> 
     )
 
 
-def check_next_steps(results: AnalysisResults) -> list[NextStep]:
+@dataclass(frozen=True)
+class RunContext:
+    """Where a run looked, so suggested commands look at the same project."""
+
+    root: str | None = None
+    config: str | None = None
+
+    def command(self, *args: str) -> str:
+        """A shell-quoted `hallow ...` command carrying this run's --root/--config."""
+        argv = ["hallow", *args]
+        if self.root is not None:
+            argv += ["--root", self.root]
+        if self.config is not None:
+            argv += ["--config", self.config]
+        return shlex.join(argv)
+
+
+def check_next_steps(results: AnalysisResults, ctx: RunContext | None = None) -> list[NextStep]:
+    ctx = ctx or RunContext()
     steps: list[NextStep] = []
     if any(f.fix and f.fix.auto_fixable for f in results.findings):
         steps.append(
             NextStep(
                 id="preview-fixes",
-                command="hallow fix --dry-run",
+                command=ctx.command("fix", "--dry-run"),
                 reason="Some findings are auto-fixable; preview the changes",
             )
         )
@@ -379,7 +398,7 @@ def check_next_steps(results: AnalysisResults) -> list[NextStep]:
         steps.append(
             NextStep(
                 id="prune-baseline",
-                command=f"hallow baselines prune --baseline {st.path} --check",
+                command=ctx.command("baselines", "prune", "--baseline", st.path, "--check"),
                 reason=f"{st.stale_entries} baseline entries match no finding",
             )
         )
@@ -387,7 +406,7 @@ def check_next_steps(results: AnalysisResults) -> list[NextStep]:
         steps.append(
             NextStep(
                 id="health-hotspots",
-                command="hallow health --format json",
+                command=ctx.command("health", "--format", "json"),
                 reason="See per-file complexity and maintainability",
             )
         )
@@ -398,8 +417,13 @@ def check_output(
     results: AnalysisResults,
     kind: Literal["check", "security"],
     elapsed_ms: int,
-    gate_outcomes: dict[str, GateOutcome],
+    gate_outcomes: dict[str, GateOutcome] | None = None,
+    ctx: RunContext | None = None,
 ) -> CheckOutput:
+    """The check/security document. Without explicit gates, the default
+    findings gate is reported (as `hallow check` with no flags would)."""
+    if gate_outcomes is None:
+        gate_outcomes = {"findings": findings_gate(results.findings, fail_on_issues=False)}
     return CheckOutput(
         kind=kind,
         elapsed_ms=elapsed_ms,
@@ -415,8 +439,13 @@ def check_output(
         health=results.health,
         baseline_staleness=results.baseline_staleness,
         gate_outcomes=gate_outcomes,
-        next_steps=check_next_steps(results),
+        next_steps=check_next_steps(results, ctx),
     )
+
+
+def prune_gate(status: str, check: bool) -> GateOutcome:
+    """`baselines prune --check` fails (exit 1) when entries could be pruned."""
+    return GateOutcome(status="fail" if status == "would-prune" else "pass", enforced=check)
 
 
 def output_json_schema() -> dict[str, Any]:
