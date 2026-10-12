@@ -165,7 +165,6 @@ Nine modules mirroring Fallow's crate structure:
 - GitHub Actions annotations (`::error`/`::warning`)
 
 **CI integration**
-- GitHub Action workflow definition
 - Pre-commit hook configuration
 - `--ci` exit code gating
 - PR-scoped audit with `hallow audit --changed-since`
