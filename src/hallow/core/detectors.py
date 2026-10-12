@@ -3,10 +3,14 @@
 from __future__ import annotations
 
 import sys
-import tomllib
 from collections import defaultdict
 
 from hallow.config.loader import HallowConfig
+from hallow.core.dependencies import (
+    dependency_manifest,
+    normalize_name,
+    read_declared_dependencies,
+)
 from hallow.graph.module_graph import ModuleGraph
 from hallow.types import (
     Finding,
@@ -276,36 +280,22 @@ def detect_unused_dependencies(
     if severity == Severity.OFF:
         return []
 
-    pyproject = config.root / "pyproject.toml"
-    if not pyproject.exists():
+    declared = [d for d in read_declared_dependencies(config.root) if not d.optional]
+    if not declared:
         return []
 
-    try:
-        with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-    except Exception:
-        return []
-
-    declared_deps: list[str] = []
-    project = data.get("project", {})
-    raw_deps = project.get("dependencies", [])
-    for dep in raw_deps:
-        name = dep.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-        if name:
-            declared_deps.append(name.lower().replace("-", "_").replace(".", "_"))
-
-    all_imports = graph.all_external_imports()
-    normalized_imports = {i.lower().replace("-", "_").replace(".", "_") for i in all_imports}
+    normalized_imports = {normalize_name(i) for i in graph.all_external_imports()}
+    ignored = {normalize_name(d) for d in config.ignore_dependencies}
 
     findings: list[Finding] = []
-    for dep in declared_deps:
-        if dep in config.ignore_dependencies:
+    for dep in declared:
+        if dep.name in ignored:
             continue
 
-        is_used = dep in normalized_imports
+        is_used = dep.name in normalized_imports
         if not is_used:
             for imp, alias in _KNOWN_IMPORT_ALIASES.items():
-                if alias == dep and imp in normalized_imports:
+                if alias == dep.name and imp in normalized_imports:
                     is_used = True
                     break
 
@@ -314,10 +304,10 @@ def detect_unused_dependencies(
                 Finding(
                     rule=RuleId.UNUSED_DEPENDENCIES,
                     severity=severity,
-                    message=f"Dependency '{dep}' is declared but never imported",
-                    location=Location(file="pyproject.toml", line=1),
-                    suggestion=f"Remove '{dep}' from [project.dependencies] if no longer needed",
-                    fix=FixAction(kind="remove_dependency", target=dep),
+                    message=f"Dependency '{dep.name}' is declared but never imported",
+                    location=Location(file=dep.file, line=dep.line),
+                    suggestion=f"Remove '{dep.name}' from {dep.file} if no longer needed",
+                    fix=FixAction(kind="remove_dependency", target=dep.name),
                 )
             )
 
@@ -332,36 +322,26 @@ def detect_unlisted_dependencies(
     if severity == Severity.OFF:
         return []
 
-    pyproject = config.root / "pyproject.toml"
-    if not pyproject.exists():
+    manifest = dependency_manifest(config.root)
+    if manifest is None:
         return []
 
-    try:
-        with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-    except Exception:
-        return []
-
-    declared: set[str] = set()
-    project = data.get("project", {})
-    for dep in project.get("dependencies", []):
-        name = dep.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-        if name:
-            declared.add(name.lower().replace("-", "_").replace(".", "_"))
-
-    for group_deps in project.get("optional-dependencies", {}).values():
-        for dep in group_deps:
-            name = dep.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-            if name:
-                declared.add(name.lower().replace("-", "_").replace(".", "_"))
-
+    declared = {d.name for d in read_declared_dependencies(config.root)}
     stdlib = _get_stdlib_modules()
 
-    all_imports = graph.all_external_imports()
-    findings: list[Finding] = []
+    # First import site of each external top-level name, so the finding points
+    # at the code that introduced the import.
+    sites: dict[str, tuple[str, int, int]] = {}
+    for path in sorted(graph.modules):
+        external = graph.external_imports(path)
+        for imp in sorted(graph.modules[path].imports, key=lambda i: i.line):
+            top = imp.module.split(".")[0] if imp.module and not imp.is_relative else ""
+            if top in external and top not in sites:
+                sites[top] = (path, imp.line, imp.col)
 
-    for imp in sorted(all_imports):
-        normalized = imp.lower().replace("-", "_").replace(".", "_")
+    findings: list[Finding] = []
+    for imp in sorted(graph.all_external_imports()):
+        normalized = normalize_name(imp)
         if normalized in declared:
             continue
         # The package may be declared under a distribution name that differs
@@ -375,13 +355,14 @@ def detect_unlisted_dependencies(
         if imp.startswith("_"):
             continue
 
+        file, line, col = sites.get(imp, (manifest, 1, 0))
         findings.append(
             Finding(
                 rule=RuleId.UNLISTED_DEPENDENCIES,
                 severity=severity,
-                message=f"'{imp}' is imported but not declared in pyproject.toml",
-                location=Location(file="pyproject.toml", line=1),
-                suggestion=f"Add '{imp}' to [project.dependencies]",
+                message=f"'{imp}' is imported but not declared in {manifest}",
+                location=Location(file=file, line=line, col=col),
+                suggestion=f"Add '{imp}' to the dependencies in {manifest}",
             )
         )
 

@@ -138,15 +138,52 @@ def _fix_unused_deps(
     dry_run: bool,
     result: FixResult,
 ) -> None:
-    if not findings:
+    by_file: dict[str, set[str]] = {}
+    for f in findings:
+        if f.fix:
+            by_file.setdefault(f.location.file, set()).add(f.fix.target)
+
+    for file, dep_names in sorted(by_file.items()):
+        if file == "pyproject.toml":
+            _remove_pyproject_deps(root / file, dep_names, dry_run, result)
+        else:
+            _remove_requirement_lines(root / file, dep_names, dry_run, result)
+
+
+def _remove_requirement_lines(
+    path: Path,
+    dep_names: set[str],
+    dry_run: bool,
+    result: FixResult,
+) -> None:
+    from hallow.core.dependencies import logical_requirement_lines, requirement_line_name
+
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
         return
 
-    pyproject = root / "pyproject.toml"
+    lines = text.splitlines(keepends=True)
+    drop: set[int] = set()
+    for first, last, logical in logical_requirement_lines(text):
+        name = requirement_line_name(logical)
+        if name and name in dep_names:
+            # the whole logical requirement, continuation lines included
+            drop.update(range(first, last + 1))
+            result.removed_deps.append(name)
+
+    if not dry_run and drop:
+        kept = [line for i, line in enumerate(lines, 1) if i not in drop]
+        path.write_text("".join(kept), encoding="utf-8")
+
+
+def _remove_pyproject_deps(
+    pyproject: Path,
+    dep_names: set[str],
+    dry_run: bool,
+    result: FixResult,
+) -> None:
     if not pyproject.exists():
-        return
-
-    dep_names = {f.fix.target for f in findings if f.fix}
-    if not dep_names:
         return
 
     try:
@@ -157,6 +194,7 @@ def _fix_unused_deps(
     lines = source.splitlines(keepends=True)
     new_lines: list[str] = []
     in_deps = False
+    removed = False
 
     for line in lines:
         stripped = line.strip()
@@ -179,19 +217,23 @@ def _fix_unused_deps(
             dep_line_name = _extract_dep_name(stripped)
             if dep_line_name and dep_line_name in dep_names:
                 result.removed_deps.append(dep_line_name)
+                removed = True
                 continue
 
         new_lines.append(line)
 
-    if not dry_run and result.removed_deps:
+    if not dry_run and removed:
         pyproject.write_text("".join(new_lines), encoding="utf-8")
 
 
 def _extract_dep_name(line: str) -> str | None:
-    cleaned = line.strip().strip('"').strip("'").strip(",")
-    if not cleaned:
-        return None
-    name = cleaned.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-    if name:
-        return name.lower().replace("-", "_").replace(".", "_")
-    return None
+    """Distribution name of one `"spec",` line in a pyproject dependency array.
+
+    Uses the same PEP 508 parser as the detectors, so the fixer and the
+    finding agree on the name (`"foo--bar>=1"` -> foo_bar, `"requests~=2"`
+    -> requests).
+    """
+    from hallow.core.dependencies import requirement_name
+
+    cleaned = line.strip().rstrip(",").strip().strip('"').strip("'")
+    return requirement_name(cleaned) if cleaned else None

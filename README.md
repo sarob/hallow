@@ -120,7 +120,7 @@ The source is organised as these modules and packages, one per pipeline stage or
 **Dead code detection**
 - Unused files (unreachable from entry points)
 - Unused imports, functions, classes, variables
-- Unused dependencies (declared in `pyproject.toml` but never imported)
+- Unused dependencies (declared in `pyproject.toml`, or `requirements.txt` when there is no `[project]` table, but never imported)
 - Unlisted dependencies (imported but not declared)
 - `__all__` entries that name nothing the module defines or imports
 
@@ -145,13 +145,13 @@ The source is organised as these modules and packages, one per pipeline stage or
 - Namespace package awareness
 
 **Framework plugins**
-- Auto-detected from `pyproject.toml` dependencies
+- Auto-detected from declared dependencies (`pyproject.toml` or `requirements*.txt`)
 - Django, Flask, FastAPI, pytest, Celery
 - Suppresses false positives for framework-registered exports (decorators, entry files, migrations)
 
 **Auto-fix**
 - `hallow fix --dry-run` previews safe changes
-- `hallow fix --apply` removes unused imports, deletes dead files, strips unused deps from `pyproject.toml`
+- `hallow fix --apply` removes unused imports, deletes dead files, strips unused deps from `pyproject.toml` or `requirements*.txt`
 
 **Security**
 - Hardcoded secrets (API keys, tokens, passwords, private keys, JWTs)
