@@ -151,3 +151,18 @@ def test_change_scoped_filter_never_warns(tmp_path: Path):
     save_baseline(_results(_finding("unchanged.py", 1, "os")), path)
     st = filter_baseline(_results(), path, change_scoped=True).baseline_staleness
     assert st.stale_entries == 1 and st.warning == "none"
+
+
+def test_non_utf8_baseline_is_unrecognised_not_a_crash(tmp_path: Path):
+    # Review of #21, round 3.
+    bad = tmp_path / "b.json"
+    bad.write_bytes(b"\xff\xfe not json")
+    assert load_baseline(bad).recognised is False
+    filtered = filter_baseline(_results(_finding("a.py", 1, "os")), bad)
+    assert len(filtered.findings) == 1 and filtered.baseline_staleness.unrecognised_format
+    assert prune_baseline(_results(), bad, check=True)["status"] == "refused"
+    runner = CliRunner()
+    result = runner.invoke(
+        app, ["baselines", "prune", "--baseline", str(bad), "--root", str(tmp_path)]
+    )
+    assert result.exit_code == 2
