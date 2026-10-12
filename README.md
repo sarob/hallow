@@ -167,7 +167,6 @@ Ten packages, one per pipeline stage or surface:
 - GitHub Actions annotations (`::error`/`::warning`)
 
 **CI integration**
-- GitHub Action workflow definition
 - Pre-commit hook configuration
 - Exit-code gating: exit 1 on error-severity findings; `--ci` = SARIF + `--fail-on-issues` + `--quiet`
 - `hallow audit`: pass/warn/fail on the findings a change introduces, against a base re-analysed in a temporary worktree (no baseline file needed)
