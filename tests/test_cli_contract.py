@@ -256,3 +256,35 @@ def test_manifest_publishes_allowed_values():
     assert flags["dupes"]["--mode"]["possible_values"] == ["strict", "mild", "weak", "semantic"]
     assert "sarif" in flags["check"]["--format"]["possible_values"]
     assert flags["health"]["--format"]["possible_values"] == ["human", "json"]
+
+
+def test_next_steps_anchor_relative_and_implicit_roots(tmp_path: Path, monkeypatch):
+    # Review of #22, round 2: relative --root/--config, and runs without --root,
+    # must still target the same project when the command runs elsewhere.
+    proj = _project(tmp_path / "proj")
+    (tmp_path / "custom.toml").write_text('[rules]\nhigh-complexity = "warn"\n')
+    (proj / "pyproject.toml").write_text('[project]\nname = "p"\n')
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+
+    monkeypatch.chdir(tmp_path)
+    _, rel = _json(["check", "--root", "proj", "-c", "custom.toml", "-f", "json"])
+    monkeypatch.chdir(proj)
+    _, implicit = _json(["check", "-f", "json"])
+
+    for doc in (rel, implicit):
+        argv = shlex.split(doc["next_steps"][0]["command"])
+        root = Path(argv[argv.index("--root") + 1])
+        assert root.is_absolute() and root == proj.resolve()
+        monkeypatch.chdir(elsewhere)
+        result = runner.invoke(app, argv[1:])
+        assert "Would remove" in result.output  # the fix preview found proj's import
+
+
+def test_mcp_next_steps_carry_the_absolute_root(tmp_path: Path):
+    from hallow.mcp.server import _dispatch_tool
+
+    proj = _project(tmp_path / "p")
+    doc = _dispatch_tool("analyze", {"root": str(proj)})
+    argv = shlex.split(doc["next_steps"][0]["command"])
+    assert Path(argv[argv.index("--root") + 1]) == proj.resolve()
