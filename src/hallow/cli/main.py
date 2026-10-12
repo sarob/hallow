@@ -664,7 +664,8 @@ def _run_security(
     findings = []
     findings.extend(detect_hardcoded_secrets(modules, root_path, cfg))
     findings.extend(detect_taint_sinks(modules, root_path, cfg))
-
+    # Same suppressions as the full analysis; no stale reporting, since the
+    # dead-code rules did not run here.
     findings = apply_suppressions(findings, modules, cfg, report_stale=False)
     stamp_identities(findings)
 

@@ -47,34 +47,65 @@ def apply_suppressions(
     if severity == Severity.OFF:
         return kept
 
+    # Candidates: unused suppressions, plus used ones naming an unknown rule
+    # (a typo next to a valid rule must not hide behind the valid one).
+    candidates: list[tuple[str, Suppression, Finding]] = []
     for path, module in sorted(modules.items()):
         for s in module.suppressions:
-            if (path, s.line) in used:
-                continue
             unknown = [r for r in s.rules if r not in _KNOWN_RULES]
+            is_used = (path, s.line) in used
+            if is_used and not unknown:
+                continue
             enabled = [
                 r
                 for r in s.rules
                 if r in _KNOWN_RULES and config.rules.severity_for(RuleId(r)) != Severity.OFF
             ]
             # A suppression naming only disabled rules is inert, not stale.
-            if s.rules and not enabled and not unknown:
+            if not is_used and s.rules and not enabled and not unknown:
                 continue
             directive = {"line": "hallow-ignore", "next-line": "hallow-ignore-next-line"}.get(
                 s.kind, "hallow-ignore-file"
             )
-            what = ", ".join(s.rules) or "all rules"
-            message = f"'{directive}' ({what}) suppresses no finding"
-            if unknown:
-                message += f"; unknown rule(s): {', '.join(unknown)}"
-            kept.append(
-                Finding(
-                    rule=RuleId.STALE_SUPPRESSION,
-                    severity=severity,
-                    message=message,
-                    location=Location(file=path, line=s.line),
-                    symbol=f"{s.kind}:{','.join(sorted(s.rules))}",
-                    suggestion="Remove the suppression comment",
-                )
+            if is_used:
+                message = f"'{directive}' names unknown rule(s): {', '.join(unknown)}"
+            else:
+                what = ", ".join(s.rules) or "all rules"
+                message = f"'{directive}' ({what}) suppresses no finding"
+                if unknown:
+                    message += f"; unknown rule(s): {', '.join(unknown)}"
+            finding = Finding(
+                rule=RuleId.STALE_SUPPRESSION,
+                severity=severity,
+                message=message,
+                location=Location(file=path, line=s.line),
+                symbol=f"{s.kind}:{','.join(sorted(s.rules))}",
+                suggestion="Remove the suppression comment, or fix the rule name",
             )
+            candidates.append((path, s, finding))
+
+    # stale-suppression findings are suppressible like any other, by a
+    # *different* suppression (one cannot hide its own staleness). A
+    # suppression that hides a stale finding is used, so it is not stale
+    # itself; iterate until nothing changes.
+    changed = True
+    while changed:
+        changed = False
+        for path, s, finding in candidates:
+            if (path, s.line) in used and finding.message.endswith("suppresses no finding"):
+                continue
+            module = modules[path]
+            cover = next(
+                (o for o in module.suppressions if o is not s and _covers(o, finding)), None
+            )
+            if cover is not None and (path, cover.line) not in used:
+                used.add((path, cover.line))
+                changed = True
+    for path, s, finding in candidates:
+        module = modules[path]
+        if any(o is not s and _covers(o, finding) for o in module.suppressions):
+            continue
+        if (path, s.line) in used and "suppresses no finding" in finding.message:
+            continue
+        kept.append(finding)
     return kept
