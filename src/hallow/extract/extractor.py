@@ -194,27 +194,25 @@ def _all_is_modified(tree: ast.Module) -> bool:
             return any(visit(c, in_function, global_all) for c in ast.iter_child_nodes(node))
 
         module_binding = not in_function or global_all
-        if isinstance(node, ast.Assign):
-            for t in node.targets:
-                if _names_all(t) and module_binding:
-                    bindings += 1
-                if isinstance(t, ast.Subscript) and _names_all(t.value):
-                    return True
-        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
-            binds = isinstance(node, ast.NamedExpr) or node.value is not None
-            if _names_all(node.target) and module_binding and binds:
-                bindings += 1
-        elif isinstance(node, ast.AugAssign):
-            if _names_all(node.target) or (
-                isinstance(node.target, ast.Subscript) and _names_all(node.target.value)
-            ):
+        if isinstance(node, ast.AnnAssign) and node.value is None:
+            return False  # `__all__: list[str]` annotates; it binds nothing
+        if isinstance(node, ast.AugAssign) and (
+            _names_all(node.target)
+            or (isinstance(node.target, ast.Subscript) and _names_all(node.target.value))
+        ):
+            return True
+        if isinstance(node, ast.Name) and node.id == "__all__" and module_binding:
+            # every binding form reaches here: plain, unpacking (`__all__, x =
+            # [], 0`), annotated, walrus, for/with targets; `del __all__` too
+            if isinstance(node.ctx, ast.Del):
                 return True
-        elif isinstance(node, ast.Delete):
+            if isinstance(node.ctx, ast.Store):
+                bindings += 1
+            return False
+        if isinstance(node, (ast.Assign, ast.Delete)):
             for t in node.targets:
-                if (_names_all(t) and module_binding) or (
-                    isinstance(t, ast.Subscript) and _names_all(t.value)
-                ):
-                    return True
+                if isinstance(t, ast.Subscript) and _names_all(t.value):
+                    return True  # `__all__[:] = ...`, `del __all__[:]`
         elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
