@@ -74,7 +74,8 @@ def load_baseline(path: Path) -> Baseline:
         return Baseline()
     try:
         return parse_baseline(path.read_text(encoding="utf-8"))
-    except OSError:
+    except (OSError, UnicodeDecodeError):
+        # unreadable or not UTF-8: not a hallow baseline (prune refuses it)
         return Baseline(recognised=False)
 
 
