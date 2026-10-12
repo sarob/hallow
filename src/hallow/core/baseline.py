@@ -3,7 +3,7 @@
 A baseline file (after fallow's baselines) records what saved it and one
 canonical key per finding occurrence:
 
-    {"kind": "check", "identity": "hl1", "saved_by": "hallow 0.1.0",
+    {"kind": "check", "identity": "hl1", "saved_by": "hallow 0.2.0",
      "entries": ["unused-imports:app.py:os", ...]}
 
 N saved occurrences of a key hide at most N current findings with that key.
