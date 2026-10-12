@@ -23,6 +23,14 @@ def _version_callback(value: bool) -> None:
         raise typer.Exit()
 
 
+def _validate_preset(value: str | None) -> str | None:
+    from hallow.core.boundaries import get_preset
+
+    if value is not None and get_preset(value) is None:
+        raise typer.BadParameter("expected one of: layered, hexagonal, feature-sliced")
+    return value
+
+
 @app.callback(invoke_without_command=True)
 def main(
     ctx: typer.Context,
@@ -60,6 +68,12 @@ def main(
         "--changed-since",
         help="Only check files changed since this git ref",
     ),
+    boundaries: str | None = typer.Option(
+        None,
+        "--boundaries",
+        help="Check architecture boundaries with a preset: layered, hexagonal, feature-sliced",
+        callback=_validate_preset,
+    ),
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -78,6 +92,7 @@ def main(
         output_file=output_file,
         ci=ci,
         changed_since=changed_since,
+        boundaries=boundaries,
     )
 
 
@@ -117,6 +132,12 @@ def check(
         "--changed-since",
         help="Only check files changed since this git ref",
     ),
+    boundaries: str | None = typer.Option(
+        None,
+        "--boundaries",
+        help="Check architecture boundaries with a preset: layered, hexagonal, feature-sliced",
+        callback=_validate_preset,
+    ),
 ) -> None:
     """Run dead code analysis."""
     _run_check(
@@ -126,6 +147,7 @@ def check(
         output_file=output_file,
         ci=ci,
         changed_since=changed_since,
+        boundaries=boundaries,
     )
 
 
@@ -317,11 +339,14 @@ def _run_check(
     output_file: Path | None,
     ci: bool,
     changed_since: str | None,
+    boundaries: str | None = None,
 ) -> None:
     from hallow.config import load_config
     from hallow.core import analyze
 
     overrides: dict = {}
+    if boundaries:
+        overrides["boundaries"] = {"preset": boundaries}
     if ci:
         overrides["ci"] = True
         overrides["fail_on_issues"] = True

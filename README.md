@@ -56,7 +56,7 @@ $ hallow fix --dry-run
   Would remove: 4 unused imports, 2 dead files, 1 unused dep
 
 # Architecture boundary check
-$ hallow check --boundaries --preset layered
+$ hallow check --boundaries layered
 
 # Security scan
 $ hallow security
