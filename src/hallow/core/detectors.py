@@ -388,6 +388,50 @@ def detect_unlisted_dependencies(
     return findings
 
 
+def detect_unused_all_entries(
+    graph: ModuleGraph,
+    config: HallowConfig,
+) -> list[Finding]:
+    """`__all__` entries that name nothing the module binds.
+
+    `from module import *` raises AttributeError on such an entry. In a
+    package `__init__.py`, an entry may name a submodule, which star-import
+    loads, so those are allowed. Modules that bind names dynamically
+    (`from x import *`, `globals()`, `exec`, `setattr`, `vars`) or define a
+    module `__getattr__` are skipped.
+    """
+    severity = config.rules.severity_for(RuleId.UNUSED_ALL_ENTRIES)
+    if severity == Severity.OFF:
+        return []
+
+    findings: list[Finding] = []
+    for path, module in graph.modules.items():
+        if module.all_list is None or module.has_dynamic_bindings:
+            continue
+        if "__getattr__" in module.bound_names:
+            continue
+
+        package_dir = path.rsplit("/", 1)[0] if "/" in path else ""
+        for name in module.all_list:
+            if name in module.bound_names:
+                continue
+            if module.is_init:
+                base = f"{package_dir}/{name}" if package_dir else name
+                if f"{base}.py" in graph.modules or f"{base}/__init__.py" in graph.modules:
+                    continue
+            findings.append(
+                Finding(
+                    rule=RuleId.UNUSED_ALL_ENTRIES,
+                    severity=severity,
+                    message=f"'{name}' is listed in __all__ but not defined or imported",
+                    location=Location(file=path, line=module.all_line or 1),
+                    suggestion=f"Remove '{name}' from __all__ or define it",
+                    fix=FixAction(kind="remove_from_all", target=name, auto_fixable=False),
+                )
+            )
+    return findings
+
+
 def _get_stdlib_modules() -> set[str]:
     if hasattr(sys, "stdlib_module_names"):
         return sys.stdlib_module_names  # type: ignore[return-value]

@@ -7,6 +7,7 @@ from hallow.core.boundaries import detect_boundary_violations
 from hallow.core.detectors import (
     detect_circular_imports,
     detect_unlisted_dependencies,
+    detect_unused_all_entries,
     detect_unused_dependencies,
     detect_unused_exports,
     detect_unused_files,
@@ -43,6 +44,7 @@ def analyze(config: HallowConfig) -> AnalysisResults:
     findings.extend(detect_unused_exports(graph, config))
     findings.extend(detect_unused_dependencies(graph, config))
     findings.extend(detect_unlisted_dependencies(graph, config))
+    findings.extend(detect_unused_all_entries(graph, config))
 
     cycles = graph.find_cycles()
     cycle_findings = detect_circular_imports(graph, config)
