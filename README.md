@@ -232,7 +232,7 @@ def nightly_rollup(): ...
 # hallow-ignore-file unused-files
 ```
 
-`hallow-ignore` applies to its own line, `hallow-ignore-next-line` to the next line of code, and `hallow-ignore-file` to the whole file. Rule names are comma- or space-separated; with none, every rule is suppressed. A suppression that no longer matches a finding is reported as `stale-suppression`. `# noqa` / `# noqa: F401` still suppresses unused imports.
+`hallow-ignore` applies to its own line, `hallow-ignore-next-line` to the next line of code, and `hallow-ignore-file` to the whole file. Rule names are comma- or space-separated; with none, every rule is suppressed. A suppression that no longer matches a finding is reported as `stale-suppression`, and so is one naming an unknown rule. A `stale-suppression` finding can itself be suppressed by another comment, never by the comment it reports on. `# noqa` / `# noqa: F401` still suppresses unused imports.
 
 ## Gating a change: `hallow audit`
 
