@@ -294,8 +294,9 @@ def test_rebound_enum_alias_is_not_trusted():
         "import enum as e\n"
         "def e(): ...\n"
         "class More(e.Enum):\n"
-        '    SECRET = "secret12"\n'
+        '    PASSWORD = "password"\n'
     )
+    # each PASSWORD would be an exempt label if its alias were trusted
     assert _lines_found(source) == [4, 8]
 
 
@@ -310,11 +311,15 @@ def test_parameter_shadowing_an_enum_import_is_not_trusted():
         "import enum as e\n"
         "f = lambda e: e\n"
         "class More(e.Enum):\n"
-        '    SECRET = "secret12"\n'
+        '    PASSWORD = "password"\n'
     )
-    # line 9 is reported because `secret12` never equals SECRET anyway; the
-    # point is line 4, which the shadowed alias must not exempt
-    assert 4 in _lines_found(source)
+    # both would be exempt labels if the aliases were trusted: the parameter
+    # shadows `Base` (line 4), the lambda parameter shadows `e` (line 9)
+    assert _lines_found(source) == [4, 9]
+    # control: without the lambda, `e.Enum` is trusted and line 4 of this
+    # source is an exempt label
+    trusted = 'import enum as e\nclass More(e.Enum):\n    PASSWORD = "password"\n'
+    assert _lines_found(trusted) == []
 
 
 def test_label_position_uses_characters_not_utf8_bytes():
