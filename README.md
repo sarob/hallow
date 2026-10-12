@@ -121,7 +121,7 @@ Nine modules mirroring Fallow's crate structure:
 - Unused imports, functions, classes, variables
 - Unused dependencies (declared in `pyproject.toml` but never imported)
 - Unlisted dependencies (imported but not declared)
-- Unused `__all__` entries
+- `__all__` entries that name nothing the module defines or imports
 
 **Complexity & health**
 - Per-function cyclomatic + cognitive complexity

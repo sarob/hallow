@@ -143,7 +143,8 @@ def _collect_accessed_attributes(tree: ast.Module) -> set[str]:
     return attrs
 
 
-def _extract_all_list(tree: ast.Module) -> list[str] | None:
+def _extract_all_list(tree: ast.Module) -> tuple[list[str] | None, int]:
+    """The literal `__all__` list and the line it is assigned on."""
     for node in ast.iter_child_nodes(tree):
         if isinstance(node, ast.Assign):
             for target in node.targets:
@@ -156,8 +157,85 @@ def _extract_all_list(tree: ast.Module) -> list[str] | None:
                         elt.value
                         for elt in node.value.elts
                         if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
-                    ]
-    return None
+                    ], node.lineno
+    return None, 0
+
+
+_DYNAMIC_BINDERS = frozenset({"globals", "exec", "setattr", "vars"})
+
+
+def _collect_module_bindings(tree: ast.Module) -> tuple[set[str], bool]:
+    """Names bound at module scope, and whether the module binds names dynamically.
+
+    Walks every module-level statement including the bodies of `if`, `try`,
+    `with`, `for`, `while` and `match`, but not function or class bodies. Errs
+    toward over-reporting bindings: a name counted as bound can only hide an
+    `__all__` finding, never invent one.
+    """
+    bound: set[str] = set()
+    dynamic = False
+
+    def add_target(target: ast.AST) -> None:
+        for n in ast.walk(target):
+            if isinstance(n, ast.Name):
+                bound.add(n.id)
+
+    def visit(stmts: list[ast.stmt]) -> None:
+        nonlocal dynamic
+        for node in stmts:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+                bound.add(node.name)
+                continue
+            if isinstance(node, ast.Import):
+                for a in node.names:
+                    bound.add(a.asname or a.name.split(".")[0])
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    if a.name == "*":
+                        dynamic = True
+                    else:
+                        bound.add(a.asname or a.name)
+            elif isinstance(node, ast.Assign):
+                for t in node.targets:
+                    add_target(t)
+            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor)):
+                add_target(node.target)
+            elif isinstance(node, (ast.With, ast.AsyncWith)):
+                for item in node.items:
+                    if item.optional_vars is not None:
+                        add_target(item.optional_vars)
+            elif type(node).__name__ == "TypeAlias":
+                add_target(node.name)  # type: ignore[attr-defined]
+
+            for field in ("body", "orelse", "finalbody"):
+                visit(getattr(node, field, []) or [])
+            for handler in getattr(node, "handlers", []) or []:
+                if handler.name:
+                    bound.add(handler.name)
+                visit(handler.body)
+            if isinstance(node, ast.Match):
+                for case in node.cases:
+                    for p in ast.walk(case.pattern):
+                        name = getattr(p, "name", None) or getattr(p, "rest", None)
+                        if isinstance(name, str):
+                            bound.add(name)
+                    visit(case.body)
+
+    visit(tree.body)
+
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Global):
+            bound.update(node.names)
+        elif isinstance(node, ast.NamedExpr):
+            add_target(node.target)
+        elif (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _DYNAMIC_BINDERS
+        ):
+            dynamic = True
+
+    return bound, dynamic
 
 
 def _decorator_name(dec: ast.expr) -> str | None:
@@ -336,7 +414,8 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
     collector = _ImportCollector()
     collector.visit(tree)
 
-    all_list = _extract_all_list(tree)
+    all_list, all_line = _extract_all_list(tree)
+    bound_names, has_dynamic_bindings = _collect_module_bindings(tree)
 
     exports: list[ExportInfo] = []
     classes: list[str] = []
@@ -391,6 +470,9 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         imports=collector.imports,
         exports=exports,
         all_list=all_list,
+        all_line=all_line,
+        bound_names=bound_names,
+        has_dynamic_bindings=has_dynamic_bindings,
         functions=functions,
         classes=classes,
         global_variables=global_vars,
