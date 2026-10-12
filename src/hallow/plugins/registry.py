@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import tomllib
 from pathlib import Path
 
 from hallow.plugins.base import FrameworkPlugin
@@ -55,28 +54,6 @@ def load_plugins(root: Path) -> PluginRegistry:
 
 
 def _read_dependencies(root: Path) -> set[str]:
-    pyproject = root / "pyproject.toml"
-    if not pyproject.exists():
-        return set()
+    from hallow.core.dependencies import read_declared_dependencies
 
-    try:
-        with open(pyproject, "rb") as f:
-            data = tomllib.load(f)
-    except Exception:
-        return set()
-
-    deps: set[str] = set()
-    project = data.get("project", {})
-
-    for dep in project.get("dependencies", []):
-        name = dep.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-        if name:
-            deps.add(name.lower().replace("-", "_"))
-
-    for group_deps in project.get("optional-dependencies", {}).values():
-        for dep in group_deps:
-            name = dep.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-            if name:
-                deps.add(name.lower().replace("-", "_"))
-
-    return deps
+    return {d.name for d in read_declared_dependencies(root)}

@@ -138,15 +138,53 @@ def _fix_unused_deps(
     dry_run: bool,
     result: FixResult,
 ) -> None:
-    if not findings:
+    by_file: dict[str, set[str]] = {}
+    for f in findings:
+        if f.fix:
+            by_file.setdefault(f.location.file, set()).add(f.fix.target)
+
+    for file, dep_names in sorted(by_file.items()):
+        if file == "pyproject.toml":
+            _remove_pyproject_deps(root / file, dep_names, dry_run, result)
+        else:
+            _remove_requirement_lines(root / file, dep_names, dry_run, result)
+
+
+def _remove_requirement_lines(
+    path: Path,
+    dep_names: set[str],
+    dry_run: bool,
+    result: FixResult,
+) -> None:
+    from hallow.core.dependencies import requirement_name
+
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    except OSError:
         return
 
-    pyproject = root / "pyproject.toml"
+    kept: list[str] = []
+    removed = False
+    for line in lines:
+        stripped = line.split(" #", 1)[0].strip()
+        name = None if stripped.startswith(("#", "-")) else requirement_name(stripped)
+        if name and name in dep_names:
+            result.removed_deps.append(name)
+            removed = True
+            continue
+        kept.append(line)
+
+    if not dry_run and removed:
+        path.write_text("".join(kept), encoding="utf-8")
+
+
+def _remove_pyproject_deps(
+    pyproject: Path,
+    dep_names: set[str],
+    dry_run: bool,
+    result: FixResult,
+) -> None:
     if not pyproject.exists():
-        return
-
-    dep_names = {f.fix.target for f in findings if f.fix}
-    if not dep_names:
         return
 
     try:
@@ -157,6 +195,7 @@ def _fix_unused_deps(
     lines = source.splitlines(keepends=True)
     new_lines: list[str] = []
     in_deps = False
+    removed = False
 
     for line in lines:
         stripped = line.strip()
@@ -179,11 +218,12 @@ def _fix_unused_deps(
             dep_line_name = _extract_dep_name(stripped)
             if dep_line_name and dep_line_name in dep_names:
                 result.removed_deps.append(dep_line_name)
+                removed = True
                 continue
 
         new_lines.append(line)
 
-    if not dry_run and result.removed_deps:
+    if not dry_run and removed:
         pyproject.write_text("".join(new_lines), encoding="utf-8")
 
 
