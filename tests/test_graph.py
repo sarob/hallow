@@ -138,3 +138,47 @@ def test_namespace_package_import_is_internal():
     graph = ModuleGraph(modules, Path("."))
     assert graph.all_external_imports() == set()
     assert "ns/mod.py" in graph.imports_of("app.py")
+
+
+def test_namespace_child_missing_locally_is_external():
+    # Review of #18: ns/ holds local code, but `ns.remote` comes from an
+    # installed distribution sharing the namespace.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["remote"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}
+
+
+def test_mixed_namespace_import_keeps_local_edge_and_external_name():
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["local", "remote"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert graph.all_external_imports() == {"ns"}
+    assert "ns/local.py" in graph.imports_of("app.py")
+
+
+def test_src_layout_namespace_package_is_internal():
+    modules = {
+        "src/app.py": _make_module("src/app.py", [_import("ns", ["mod"]), _import("ns.sub")]),
+        "src/ns/mod.py": _make_module("src/ns/mod.py"),
+        "src/ns/sub/thing.py": _make_module("src/ns/sub/thing.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == set()
+
+
+def test_declared_namespace_distribution_is_not_reported_unused(tmp_path):
+    # The detector-level consequence: losing the external name made a
+    # declared, installed dependency look unused.
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = ["ns"]\n')
+    (tmp_path / "ns").mkdir()
+    (tmp_path / "ns" / "local.py").write_text("x = 1\n")
+    (tmp_path / "app.py").write_text("from ns import local, remote\nprint(local, remote)\n")
+    rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
+    assert "unused-dependencies" not in rules
+    assert "unlisted-dependencies" not in rules
