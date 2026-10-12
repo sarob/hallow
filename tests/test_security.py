@@ -184,3 +184,16 @@ def test_taint_skips_test_files():
         assert len(findings) == 0
     finally:
         tmp.cleanup()
+
+
+def test_value_spelling_the_key_is_not_a_secret():
+    # Regression: `HARDCODED_SECRET = "hardcoded-secret"` (an enum member) was an error.
+    source = (
+        'class RuleId:\n    HARDCODED_SECRET = "hardcoded-secret"\n    API_KEY = "api_key_value"\n'
+    )
+    modules, root, tmp = _modules_from_source(source)
+    try:
+        findings = detect_hardcoded_secrets(modules, root, _config())
+        assert [f.location.line for f in findings] == [3]
+    finally:
+        tmp.cleanup()
