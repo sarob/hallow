@@ -149,8 +149,46 @@ def test_security_command_honours_suppressions(tmp_path):
 
     from hallow.cli.main import app
 
-    (tmp_path / "app.py").write_text(
-        'TOKEN = "ghp_' + "a" * 36 + '"  # hallow-ignore hardcoded-secret -- test fixture\n'
-    )
+    token = 'TOKEN = "ghp_' + "a" * 36 + '"'
+    (tmp_path / "app.py").write_text(token + "  # hallow-ignore hardcoded-secret -- fixture\n")
+    (tmp_path / "control.py").write_text(token + "\n")
     result = CliRunner().invoke(app, ["security", "--root", str(tmp_path), "-f", "compact"])
-    assert "hardcoded-secret" not in result.output
+    assert result.exception is None, result.exception
+    # the unsuppressed control is reported, the suppressed one is not
+    assert "control.py:1" in result.output
+    assert "app.py:1" not in result.output
+
+
+def test_unknown_rule_survives_when_its_directive_hides_a_stale_finding():
+    # Review of #15, round 2: directive 1 becomes used by hiding directive 2's
+    # stale finding, but its own unknown rule must still be reported.
+    found = _analyze(
+        {
+            "main.py": """\
+            # hallow-ignore-file stale-suppression, no-such-rule
+            x = 1  # hallow-ignore no-such-rule
+            print(x)
+        """,
+        }
+    )
+    assert [f for f in found if f[0] == "stale-suppression"] == [
+        ("stale-suppression", "main.py", 1)
+    ]
+
+
+def test_suppressed_cycle_and_clone_are_not_counted(tmp_path):
+    # Review of #15: suppressing a cycle's or clone group's finding removes it
+    # from total_issues; results.cycles/duplicates remain as data.
+    block = "\n".join(f"    v{i} = compute({i}) + offset_{i}" for i in range(20))
+    (tmp_path / "a.py").write_text(
+        "# hallow-ignore-file circular-dependencies, duplicate-code\n"
+        f"import b\ndef fa():\n{block}\n"
+    )
+    (tmp_path / "b.py").write_text(f"import a\ndef fb():\n{block}\n")
+    cfg = HallowConfig(root=tmp_path)
+    cfg.duplicates.min_tokens = 30
+    results = analyze(cfg)
+    rules = {f.rule.value for f in results.findings}
+    assert results.cycles and results.duplicates
+    assert not {"circular-dependencies", "duplicate-code"} & rules
+    assert results.total_issues == len(results.findings) == results.errors + results.warnings
