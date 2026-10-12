@@ -197,3 +197,22 @@ def test_baseline_growth_gate(repo: Path):
         "threshold": None,
     }
     assert r.exit_code == 1
+
+
+def test_change_scoped_runs_do_not_warn_about_unchanged_baseline_entries(repo: Path):
+    # Review of #21: entries for files outside the change are not stale.
+    b = repo / "b.json"
+    runner.invoke(app, ["check", "--root", str(repo), "--save-baseline", str(b), "-q"])
+    _commit(repo, "baseline")
+    (repo / "other.py").write_text("import helper\nhelper.run()\n# edit\n")
+    for args in (
+        ["check", "--root", str(repo), "--changed-since", "main", "--baseline", str(b)],
+        ["audit", "--root", str(repo), "--base", "main", "--baseline", str(b)],
+    ):
+        result = runner.invoke(app, args)
+        assert "is stale" not in result.stderr, args
+        assert result.exit_code in (0, 1)
+    # the same baseline on a full run with that finding fixed does warn
+    (repo / "helper.py").write_text("def run(): ...\n")
+    full = runner.invoke(app, ["check", "--root", str(repo), "--baseline", str(b)])
+    assert "is stale" in full.stderr
