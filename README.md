@@ -130,8 +130,9 @@ Nine modules mirroring Fallow's crate structure:
 - Complexity hotspot identification
 
 **Duplication**
-- Clone detection via tokenization + suffix array + LCP
-- Four modes: strict (exact), mild (normalized identifiers), weak (structure only), semantic
+- Clone detection by hashing fixed-size token windows and extending each match to its longest common run
+- Four modes, matching fallow's: strict and mild (exact tokens; comments and whitespace are never tokens), weak (string values ignored), semantic (identifiers, strings and numbers ignored, so renamed copies match)
+- Upgrading from 0.1.0: `mild` (the default) used to ignore identifiers and literals, and `weak` also ignored operators. The default now reports exact copies only. To keep reporting renamed copies, set `mode = "semantic"` under `[tool.hallow.duplicates]` (or `[duplicates]` in `.hallowrc.toml`)
 
 **Circular dependencies**
 - Detection via Tarjan's strongly connected components

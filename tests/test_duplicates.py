@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+import pytest
 
 from hallow.config.loader import HallowConfig
 from hallow.core.duplicates import detect_duplicates, tokenize_file
@@ -25,22 +28,57 @@ def test_tokenize_strict():
         assert "1" in values
 
 
-def test_tokenize_mild_normalizes_names():
+def test_tokenize_mild_keeps_tokens_as_written():
+    # mild == strict: the tokenizer already drops comments and whitespace (as in fallow).
     with TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        p = _write_file(root, "a.py", "foo = bar + baz\n")
-        tokens = tokenize_file(p, root, "mild")
-        values = [t.value for t in tokens]
-        assert values.count("$ID") == 3
+        p = _write_file(root, "a.py", "foo = bar + 'x'  # note\n")
+        values = [t.value for t in tokenize_file(p, root, "mild")]
+        assert values == ["foo", "=", "bar", "+", "'x'"]
+        assert values == [t.value for t in tokenize_file(p, root, "strict")]
 
 
-def test_tokenize_weak_normalizes_ops():
+def test_tokenize_weak_blinds_strings_only():
     with TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
-        p = _write_file(root, "a.py", "x = 1 + 2\n")
-        tokens = tokenize_file(p, root, "weak")
-        values = [t.value for t in tokens]
-        assert "$OP" in values
+        p = _write_file(root, "a.py", "x = 'a' + 2\n")
+        values = [t.value for t in tokenize_file(p, root, "weak")]
+        assert values == ["x", "=", "$STR", "+", "2"]
+
+
+def test_tokenize_semantic_blinds_identifiers_and_literals():
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        p = _write_file(root, "a.py", "if foo: bar = 'a' + 2\n")
+        values = [t.value for t in tokenize_file(p, root, "semantic")]
+        assert values == ["if", "$ID", ":", "$ID", "=", "$STR", "+", "$NUM"]
+
+
+def test_semantic_differs_from_mild():
+    # Regression: semantic used to be the same code path as mild.
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        p = _write_file(root, "a.py", "total = price * 3\n")
+        assert [t.value for t in tokenize_file(p, root, "semantic")] != [
+            t.value for t in tokenize_file(p, root, "mild")
+        ]
+
+
+def test_renamed_copy_matches_only_in_semantic_mode():
+    body_a = "\n".join(f"    alpha_{i} = source_{i}(i) + {i}" for i in range(20))
+    body_b = "\n".join(f"    beta_{i} = origin_{i}(i) + {i}" for i in range(20))
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        _write_file(root, "a.py", f"def a():\n{body_a}\n")
+        _write_file(root, "b.py", f"def b():\n{body_b}\n")
+        files = sorted(root.glob("*.py"))
+        cfg = HallowConfig(root=root)
+        cfg.duplicates.min_tokens = 30
+        cfg.duplicates.mode = "mild"
+        assert detect_duplicates(files, root, cfg)[0] == []
+        cfg.duplicates.mode = "semantic"
+        groups, _ = detect_duplicates(files, root, cfg)
+        assert len(groups) == 1
 
 
 def test_no_duplicates_in_unique_code():
@@ -133,3 +171,44 @@ def test_syntax_error_file_skipped():
         _write_file(root, "broken.py", "def bad(:\n")
         tokens = tokenize_file(root / "broken.py", root, "strict")
         assert len(tokens) == 0 or isinstance(tokens, list)
+
+
+def _tokens(src: str, mode: str) -> list[str]:
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        p = _write_file(root, "a.py", src)
+        return [t.value for t in tokenize_file(p, root, mode)]
+
+
+def test_fstring_text_blinding_by_mode():
+    src = 'x = f"a{b + 1}c"\n'
+    if sys.version_info >= (3, 12):
+        # 3.12+ tokenizes f-strings piecewise: literal text is FSTRING_MIDDLE,
+        # the interpolation keeps its own tokens, operators included.
+        strict = ["x", "=", 'f"', "a", "{", "b", "+", "1", "}", "c", '"']
+        assert _tokens(src, "strict") == strict
+        assert _tokens(src, "mild") == strict
+        assert _tokens(src, "weak") == [
+            "x", "=", 'f"', "$STR", "{", "b", "+", "1", "}", "$STR", '"',
+        ]  # fmt: skip
+        assert _tokens(src, "semantic") == [
+            "$ID", "=", 'f"', "$STR", "{", "$ID", "+", "$NUM", "}", "$STR", '"',
+        ]  # fmt: skip
+    else:
+        # 3.11 tokenizes the whole f-string, interpolation included, as one STRING.
+        assert _tokens(src, "strict") == ["x", "=", 'f"a{b + 1}c"']
+        assert _tokens(src, "mild") == ["x", "=", 'f"a{b + 1}c"']
+        assert _tokens(src, "weak") == ["x", "=", "$STR"]
+        assert _tokens(src, "semantic") == ["$ID", "=", "$STR"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="t-strings are Python 3.14+")
+def test_tstring_text_blinding_by_mode():
+    src = 'y = t"a{b + 1}"\n'
+    strict = ["y", "=", 't"', "a", "{", "b", "+", "1", "}", '"']
+    assert _tokens(src, "strict") == strict
+    assert _tokens(src, "mild") == strict
+    assert _tokens(src, "weak") == ["y", "=", 't"', "$STR", "{", "b", "+", "1", "}", '"']
+    assert _tokens(src, "semantic") == [
+        "$ID", "=", 't"', "$STR", "{", "$ID", "+", "$NUM", "}", '"',
+    ]  # fmt: skip
