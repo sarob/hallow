@@ -164,6 +164,7 @@ Nine modules mirroring Fallow's crate structure:
 - GitHub Actions annotations (`::error`/`::warning`)
 
 **CI integration**
+- This repository's own CI (`.github/workflows/ci.yml`): pytest on Python 3.11–3.14, ruff, and `hallow check` on its own source
 - Pre-commit hook configuration
 - `--ci` exit code gating
 - PR-scoped audit with `hallow audit --changed-since`
