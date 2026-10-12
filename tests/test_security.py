@@ -280,3 +280,18 @@ def test_enum_bases_resolve_through_aliases_and_local_subclasses():
         '    API_KEY = "api-key"\n'
     )
     assert _lines_found(source) == []
+
+
+def test_rebound_enum_alias_is_not_trusted():
+    # Review of #21, round 2: `Base = object` makes Credentials an ordinary class.
+    source = (
+        "from enum import Enum as Base\n"
+        "Base = object\n"
+        "class Credentials(Base):\n"
+        '    PASSWORD = "password"\n'
+        "import enum as e\n"
+        "def e(): ...\n"
+        "class More(e.Enum):\n"
+        '    SECRET = "secret12"\n'
+    )
+    assert _lines_found(source) == [4, 8]
