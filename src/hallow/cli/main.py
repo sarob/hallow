@@ -310,7 +310,7 @@ def _run_check(
             )
         _emit_results(
             results, out_fmt, output_file, "check", _elapsed_ms(start), gates,
-            _context(root, config_path),
+            _context(cfg, config_path),
         )  # fmt: skip
         return _exit_for(gates)
 
@@ -344,12 +344,15 @@ def _apply_baseline(results, baseline_path, save_baseline_path, quiet: bool):
     return results
 
 
-def _context(root: Path | None, config: Path | None):
+def _context(cfg, config: Path | None):
+    """The run's effective project root and config as absolute paths, so a
+    suggested command analyses the same project from any directory (the root
+    is included even when it was found by walking up from the cwd)."""
     from hallow.output.envelope import RunContext
 
     return RunContext(
-        root=str(root) if root is not None else None,
-        config=str(config) if config is not None else None,
+        root=str(cfg.root.resolve()),
+        config=str(config.resolve()) if config is not None else None,
     )
 
 
@@ -412,7 +415,7 @@ def health(
                 else [
                     NextStep(
                         id="check-complexity",
-                        command=_context(root, config).command("check", "--format", "json"),
+                        command=_context(cfg, config).command("check", "--format", "json"),
                         reason=f"{len(project.hotspots)} file(s) hold complexity hotspots",
                     )
                 ],
@@ -621,7 +624,7 @@ def security(
         gates = {"findings": findings_gate(results.findings, fail_on_issues)}
         _emit_results(
             results, out_fmt, output_file, "security", _elapsed_ms(start), gates,
-            _context(root, config),
+            _context(cfg, config),
         )  # fmt: skip
         return _exit_for(gates)
 

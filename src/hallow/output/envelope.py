@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import shlex
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
@@ -300,7 +301,9 @@ def check_next_steps(results: AnalysisResults, ctx: RunContext | None = None) ->
         steps.append(
             NextStep(
                 id="prune-baseline",
-                command=ctx.command("baselines", "prune", "--baseline", st.path, "--check"),
+                command=ctx.command(
+                    "baselines", "prune", "--baseline", str(Path(st.path).resolve()), "--check"
+                ),
                 reason=f"{st.stale_entries} baseline entries match no finding",
             )
         )
