@@ -11,6 +11,7 @@ from typing import Any
 import typer
 
 from hallow import __version__
+from hallow.cli.options import FLAG_VALUES
 from hallow.config.loader import _DEFAULT_RULES
 from hallow.core.boundaries import _PRESETS
 from hallow.exit_codes import EXIT_CODES
@@ -53,8 +54,6 @@ def _type_name(t: Any) -> str:
 
 
 def _flags(command: Any, name: str = "") -> list[dict[str, Any]]:
-    from hallow.cli.main import FLAG_VALUES
-
     out = []
     for p in command.params:
         if getattr(p, "param_type_name", "") != "option" or p.name in _SKIP_PARAMS:
