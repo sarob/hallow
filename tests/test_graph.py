@@ -204,3 +204,12 @@ def test_namespace_attribute_import_reports_no_dependency(tmp_path):
     (tmp_path / "app.py").write_text("from ns import __path__, local\nprint(__path__, local)\n")
     rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
     assert "unlisted-dependencies" not in rules
+
+
+def test_unknown_dunder_child_is_still_external():
+    # Review of #21, round 2: only real module attributes are exempt.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["__vendor__"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}

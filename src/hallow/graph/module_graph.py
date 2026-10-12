@@ -14,8 +14,16 @@ def _is_project_package(module: str, project_dirs: set[str]) -> bool:
     return base in project_dirs or f"src/{base}" in project_dirs
 
 
+# Attributes every module object has, namespace packages included. Any other
+# requested name — even a dunder like `__vendor__` — is a child module.
+_MODULE_ATTRIBUTES = frozenset(
+    {"__path__", "__name__", "__file__", "__spec__", "__loader__", "__package__", "__doc__",
+     "__dict__", "__builtins__", "__cached__", "__all__"}
+)  # fmt: skip
+
+
 def _is_dunder(name: str) -> bool:
-    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+    return name in _MODULE_ATTRIBUTES
 
 
 def _is_local_child(module: str, name: str, all_paths: set[str], project_dirs: set[str]) -> bool:
