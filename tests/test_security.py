@@ -227,3 +227,56 @@ def test_skipped_label_does_not_hide_a_secret_on_the_same_line():
         assert findings[0].location.col == source.splitlines()[2].index("password")
     finally:
         tmp.cleanup()
+
+
+# ── review of #12, round 2 ──
+
+
+def _lines_found(source: str) -> list[int]:
+    modules, root, tmp = _modules_from_source(source)
+    try:
+        return [f.location.line for f in detect_hardcoded_secrets(modules, root, _config())]
+    finally:
+        tmp.cleanup()
+
+
+def test_unrelated_base_ending_in_flag_or_enum_is_not_an_enum():
+    source = (
+        "class FeatureFlag:\n"
+        "    pass\n"
+        "class MyEnum:\n"
+        "    pass\n"
+        "class Credentials(FeatureFlag):\n"
+        '    PASSWORD = "password"\n'
+        "class More(MyEnum):\n"
+        '    SECRET = "secret12"\n'
+    )
+    assert _lines_found(source) == [6, 8]
+
+
+def test_nested_credential_inside_an_enum_member_is_reported():
+    source = (
+        "from enum import Enum\n"
+        "class Settings(Enum):\n"
+        '    LOGIN = dict(password="password")\n'
+        "    OTHER = dict(\n"
+        '        password="password",\n'
+        "    )\n"
+    )
+    assert _lines_found(source) == [3, 5]
+
+
+def test_enum_bases_resolve_through_aliases_and_local_subclasses():
+    source = (
+        "import enum as e\n"
+        "from enum import StrEnum as S\n"
+        "class A(S):\n"
+        '    HARDCODED_SECRET = "hardcoded-secret"\n'
+        "class B(e.Flag):\n"
+        '    AUTH_TOKEN = "auth_token"\n'
+        "class Base(e.Enum):\n"
+        "    pass\n"
+        "class C(Base):\n"
+        '    API_KEY = "api-key"\n'
+    )
+    assert _lines_found(source) == []

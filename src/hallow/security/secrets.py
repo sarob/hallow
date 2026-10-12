@@ -85,13 +85,13 @@ def detect_hardcoded_secrets(
         except OSError:
             continue
 
-        enum_lines = _enum_member_lines(source)
+        labels = _enum_label_positions(source)
         for line_num, line in enumerate(source.splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#") or not stripped:
                 continue
 
-            hit = _first_secret(line, in_enum=line_num in enum_lines)
+            hit = _first_secret(line, line_num, labels)
             if hit is None:
                 continue
             label, match = hit
@@ -109,42 +109,96 @@ def detect_hardcoded_secrets(
     return findings
 
 
-def _first_secret(line: str, in_enum: bool) -> tuple[str, re.Match[str]] | None:
+def _first_secret(
+    line: str, line_num: int, labels: set[tuple[int, int]]
+) -> tuple[str, re.Match[str]] | None:
     """The first reportable match on a line (one finding per line).
 
-    Every match of every pattern is considered, so a skipped enum label does
-    not hide a real secret later on the same line.
+    Later matches are still examined after an exempt enum label, so a label
+    does not hide a real secret further along the same line.
     """
     for label, pattern in _SECRET_PATTERNS:
         for match in pattern.finditer(line):
             if _is_safe_context(line, match.group()):
                 break
-            if in_enum and _value_names_key(match, _assigned_key(line, match)):
+            value_start = match.start("value") if "value" in match.groupdict() else -1
+            # the opening quote of an exempt label literal sits at (line, col)
+            if value_start > 0 and (line_num, value_start - 1) in labels:
                 continue
             return label, match
     return None
 
 
-_ENUM_BASES = ("Enum", "Flag")
+_ENUM_TYPES = frozenset({"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum"})
 
 
-def _enum_member_lines(source: str) -> set[int]:
-    """Lines holding a member assignment in the body of an Enum/Flag subclass."""
+def _enum_label_positions(source: str) -> set[tuple[int, int]]:
+    """(line, column) of each enum label literal: a member whose value spells its name.
+
+    Only exact members count: `NAME = "name"` (a single name target and a
+    plain string value) in the body of a class whose base resolves to the
+    `enum` module, through `from enum import X [as Y]`, `import enum [as e]`,
+    or another such class in the same file. Anything unresolved, nested in an
+    expression, or with a different value stays reportable.
+    """
     try:
         tree = ast.parse(source)
     except SyntaxError:
         return set()
-    lines: set[int] = set()
+
+    enum_names: set[str] = set()  # local names bound to enum base types
+    enum_modules: set[str] = set()  # local names bound to the enum module
     for node in ast.walk(tree):
-        if not isinstance(node, ast.ClassDef):
-            continue
-        bases = [b.id if isinstance(b, ast.Name) else getattr(b, "attr", "") for b in node.bases]
-        if not any(name.endswith(_ENUM_BASES) for name in bases):
-            continue
-        for stmt in node.body:
-            if isinstance(stmt, ast.Assign | ast.AnnAssign):
-                lines.update(range(stmt.lineno, (stmt.end_lineno or stmt.lineno) + 1))
-    return lines
+        if isinstance(node, ast.ImportFrom) and node.module == "enum" and node.level == 0:
+            for alias in node.names:
+                if alias.name in _ENUM_TYPES:
+                    enum_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "enum":
+                    enum_modules.add(alias.asname or "enum")
+
+    def is_enum_base(base: ast.expr) -> bool:
+        if isinstance(base, ast.Name):
+            return base.id in enum_names
+        return (
+            isinstance(base, ast.Attribute)
+            and isinstance(base.value, ast.Name)
+            and base.value.id in enum_modules
+            and base.attr in _ENUM_TYPES
+        )
+
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    enum_classes: list[ast.ClassDef] = []
+    changed = True
+    while changed:  # classes deriving from enum classes defined in this file
+        changed = False
+        for cls in classes:
+            if cls not in enum_classes and any(is_enum_base(b) for b in cls.bases):
+                enum_classes.append(cls)
+                enum_names.add(cls.name)
+                changed = True
+
+    positions: set[tuple[int, int]] = set()
+    for cls in enum_classes:
+        for stmt in cls.body:
+            if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1):
+                continue
+            target, value = stmt.targets[0], stmt.value
+            if (
+                isinstance(target, ast.Name)
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and _norm(value.value) == _norm(target.id)
+            ):
+                # col_offset counts UTF-8 bytes; it equals the str index for
+                # ASCII lines. A mismatch only makes the label reportable.
+                positions.add((value.lineno, value.col_offset))
+    return positions
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
 
 
 def _assigned_key(line: str, match: re.Match[str]) -> str:
@@ -153,23 +207,6 @@ def _assigned_key(line: str, match: re.Match[str]) -> str:
     end = match.start() + sep.start() if sep else match.start()
     m = _KEY_BEFORE_RE.search(line[:end])
     return m.group(1) if m else ""
-
-
-def _value_names_key(match: re.Match[str], key: str) -> bool:
-    """True when the value only spells out the key's own name.
-
-    Applied only to Enum/Flag members, where `HARDCODED_SECRET =
-    "hardcoded-secret"` is a label. Anywhere else, a password whose value
-    equals its own name is still a credential and stays reported.
-    """
-    value = match.groupdict().get("value")
-    if not value or not key:
-        return False
-
-    def norm(text: str) -> str:
-        return re.sub(r"[^a-z0-9]", "", text.lower())
-
-    return norm(value) == norm(key.rsplit(".", 1)[-1])
 
 
 def _is_safe_context(line: str, matched: str) -> bool:
