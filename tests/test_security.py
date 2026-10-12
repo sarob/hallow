@@ -249,7 +249,7 @@ def test_unrelated_base_ending_in_flag_or_enum_is_not_an_enum():
         "class Credentials(FeatureFlag):\n"
         '    PASSWORD = "password"\n'
         "class More(MyEnum):\n"
-        '    SECRET = "secret12"\n'
+        '    PASSWORD = "password"\n'
     )
     assert _lines_found(source) == [6, 8]
 
@@ -277,9 +277,11 @@ def test_enum_bases_resolve_through_aliases_and_local_subclasses():
         "class Base(e.Enum):\n"
         "    pass\n"
         "class C(Base):\n"
-        '    API_KEY = "api-key"\n'
+        '    AUTH_TOKEN = "auth-token"\n'
     )
     assert _lines_found(source) == []
+    # control: the same literal outside an enum is reported
+    assert _lines_found('AUTH_TOKEN = "auth-token"\n') == [1]
 
 
 def test_rebound_enum_alias_is_not_trusted():
@@ -295,3 +297,32 @@ def test_rebound_enum_alias_is_not_trusted():
         '    SECRET = "secret12"\n'
     )
     assert _lines_found(source) == [4, 8]
+
+
+def test_parameter_shadowing_an_enum_import_is_not_trusted():
+    # Review of #12, round 3.
+    source = (
+        "from enum import Enum as Base\n"
+        "def make_credentials(Base):\n"
+        "    class Credentials(Base):\n"
+        '        PASSWORD = "password"\n'
+        "    return Credentials\n"
+        "import enum as e\n"
+        "f = lambda e: e\n"
+        "class More(e.Enum):\n"
+        '    SECRET = "secret12"\n'
+    )
+    # line 9 is reported because `secret12` never equals SECRET anyway; the
+    # point is line 4, which the shadowed alias must not exempt
+    assert 4 in _lines_found(source)
+
+
+def test_label_position_uses_characters_not_utf8_bytes():
+    # Review of #12, round 3: 16 two-byte characters before `X = "x"` made its
+    # byte column equal the password's character column.
+    source = (
+        "from enum import Enum\n"
+        "class Settings(Enum):\n"
+        "    " + "\u00e9" * 16 + ' = 0; X = "x"; password = "sensitive123!"\n'
+    )
+    assert _lines_found(source) == [3]
