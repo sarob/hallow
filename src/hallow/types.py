@@ -210,7 +210,9 @@ class AnalysisResults(BaseModel):
     warnings: int = 0
 
     def compute_totals(self) -> None:
-        self.total_issues = len(self.findings) + len(self.cycles) + len(self.duplicates)
+        # Cycles and duplicate groups each carry a finding of their own, so the
+        # findings list is the complete count.
+        self.total_issues = len(self.findings)
         self.errors = sum(1 for f in self.findings if f.severity == Severity.ERROR)
         self.warnings = sum(1 for f in self.findings if f.severity == Severity.WARN)
 
