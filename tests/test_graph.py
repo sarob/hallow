@@ -213,3 +213,14 @@ def test_unknown_dunder_child_is_still_external():
         "ns/local.py": _make_module("ns/local.py"),
     }
     assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}
+
+
+def test_names_a_namespace_package_does_not_define_are_children():
+    # Review of #18, round 3: a namespace package has no __all__, so
+    # `from ns import __all__` names a child (here, not local: external).
+    for name in ("__all__", "__builtins__", "__cached__"):
+        modules = {
+            "app.py": _make_module("app.py", [_import("ns", [name])]),
+            "ns/local.py": _make_module("ns/local.py"),
+        }
+        assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}, name
