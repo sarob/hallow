@@ -109,7 +109,9 @@ def filter_baseline(
     matched_n = sum(matched.values())
     stale_n = total - matched_n
     warning = "none"
-    if not change_scoped and results.findings and total:
+    # A full scan saw every finding the baseline could match, so unmatched
+    # entries are stale even when the run is clean (every finding fixed).
+    if not change_scoped and total:
         if matched_n == 0:
             warning = "zero-overlap"
         elif stale_n * 4 >= total:

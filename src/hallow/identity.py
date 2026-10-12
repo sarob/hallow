@@ -62,7 +62,10 @@ def identity_parts(finding: Finding, path_map: dict[str, str] | None = None) -> 
     if rule in _NAME_ONLY:
         return [symbol]
     if rule == RuleId.CIRCULAR_DEPENDENCIES:
-        members = sorted(p(m).replace("|", "%7C") for m in symbol.split("|") if m)
+        # Each member escaped before joining, so a `|` inside a filename
+        # cannot merge two different member sets into one key.
+        modules = finding.metadata.get("modules") or [m for m in symbol.split("|") if m]
+        members = sorted(_escape(p(m)).replace("|", "%7C") for m in modules)
         return ["|".join(members)]
     if rule == RuleId.HIGH_COMPLEXITY:
         return [p(finding.location.file), symbol, str(finding.metadata.get("kind", ""))]
@@ -73,6 +76,8 @@ def identity_parts(finding: Finding, path_map: dict[str, str] | None = None) -> 
 
 def canonical_key(finding: Finding, path_map: dict[str, str] | None = None) -> str:
     parts = identity_parts(finding, path_map)
+    if finding.rule == RuleId.CIRCULAR_DEPENDENCIES:
+        return f"{finding.rule.value}:{parts[0]}"  # members already escaped
     return ":".join([finding.rule.value, *(_escape(x) for x in parts)])
 
 

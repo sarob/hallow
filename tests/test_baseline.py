@@ -128,3 +128,26 @@ def test_cli_check_baseline_round_trip_and_prune(tmp_path: Path):
         == 0
     )
     assert json.loads(b.read_text())["entries"] == ["unused-imports:helper.py:json"]
+
+
+def test_fully_stale_baseline_warns_on_a_clean_full_run(tmp_path: Path):
+    # Review of #21: every finding fixed -> every entry stale, and still a warning.
+    root = tmp_path / "p"
+    root.mkdir()
+    (root / "main.py").write_text("import helper\nhelper.run()\n")
+    (root / "helper.py").write_text("import json\ndef run(): ...\n")
+    b = tmp_path / "b.json"
+    runner = CliRunner()
+    runner.invoke(app, ["check", "--root", str(root), "--save-baseline", str(b)])
+    (root / "helper.py").write_text("def run(): ...\n")
+    result = runner.invoke(app, ["check", "--root", str(root), "--baseline", str(b)])
+    assert "is stale: 1 of 1 entries match no finding" in result.stderr
+    st = filter_baseline(_results(), b).baseline_staleness
+    assert (st.warning, st.stale_entries) == ("zero-overlap", 1)
+
+
+def test_change_scoped_filter_never_warns(tmp_path: Path):
+    path = tmp_path / "b.json"
+    save_baseline(_results(_finding("unchanged.py", 1, "os")), path)
+    st = filter_baseline(_results(), path, change_scoped=True).baseline_staleness
+    assert st.stale_entries == 1 and st.warning == "none"

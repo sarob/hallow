@@ -91,3 +91,16 @@ def test_every_finding_from_analysis_is_stamped(tmp_path: Path):
     assert all(f.finding_id.startswith("hl1:") and f.key for f in results.findings)
     ids = [f.finding_id for f in results.findings]
     assert len(ids) == len(set(ids))
+
+
+def test_cycle_members_containing_a_pipe_do_not_collide():
+    # Review of #21: [a|b.py, c.py] and [a, b.py, c.py] joined to the same key.
+    one = _f(RuleId.CIRCULAR_DEPENDENCIES, "a|b.py", 1, "", modules=["a|b.py", "c.py"])
+    two = _f(RuleId.CIRCULAR_DEPENDENCIES, "a", 1, "", modules=["a", "b.py", "c.py"])
+    assert canonical_key(one) != canonical_key(two)
+    assert canonical_key(one) == "circular-dependencies:a%7Cb.py|c.py"
+
+
+def test_cycle_key_uses_member_list_and_escapes_colons():
+    f = _f(RuleId.CIRCULAR_DEPENDENCIES, "b.py", 1, "", modules=["b.py", "a:x.py"])
+    assert canonical_key(f) == "circular-dependencies:a%3Ax.py|b.py"
