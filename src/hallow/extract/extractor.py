@@ -164,25 +164,69 @@ def _extract_all_list(tree: ast.Module) -> tuple[list[str] | None, int]:
 _DYNAMIC_BINDERS = frozenset({"globals", "exec", "setattr", "vars"})
 
 
+# list methods that change the contents of `__all__`
+_MUTATING_METHODS = frozenset(
+    {"append", "extend", "insert", "remove", "pop", "clear", "__iadd__", "__imul__",
+     "__setitem__", "__delitem__"}
+)  # fmt: skip
+
+
 def _all_is_modified(tree: ast.Module) -> bool:
-    """True unless `__all__` is bound exactly once and never mutated in place."""
-    writes = 0
-    for node in ast.walk(tree):
-        targets: list[ast.expr] = []
+    """True unless module-level `__all__` is bound exactly once and never changed.
+
+    Counts as a change: a second module-level binding (assignment, walrus,
+    annotated assignment), augmented assignment (`+=`, `*=`), item or slice
+    assignment or deletion (`__all__[:] = ...`, `del __all__[:]`), `del
+    __all__`, or a mutating list method (`append`, `remove`, `clear`, ...).
+    Bindings inside a function count only when the function declares
+    `global __all__`; read-only methods (`count`, `index`, `copy`) do not.
+    """
+    bindings = 0
+
+    def visit(node: ast.AST, in_function: bool, global_all: bool) -> bool:
+        nonlocal bindings
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            declares = any(
+                isinstance(n, ast.Global) and "__all__" in n.names for n in ast.walk(node)
+            )
+            return any(visit(c, True, declares) for c in ast.iter_child_nodes(node))
+        if isinstance(node, ast.ClassDef):
+            return any(visit(c, in_function, global_all) for c in ast.iter_child_nodes(node))
+
+        module_binding = not in_function or global_all
         if isinstance(node, ast.Assign):
-            targets = node.targets
-        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
-            targets = [node.target]
-            if isinstance(node, ast.AugAssign) and _names_all(node.target):
+            for t in node.targets:
+                if _names_all(t) and module_binding:
+                    bindings += 1
+                if isinstance(t, ast.Subscript) and _names_all(t.value):
+                    return True
+        elif isinstance(node, (ast.AnnAssign, ast.NamedExpr)):
+            binds = isinstance(node, ast.NamedExpr) or node.value is not None
+            if _names_all(node.target) and module_binding and binds:
+                bindings += 1
+        elif isinstance(node, ast.AugAssign):
+            if _names_all(node.target) or (
+                isinstance(node.target, ast.Subscript) and _names_all(node.target.value)
+            ):
                 return True
-        writes += sum(1 for t in targets for n in ast.walk(t) if _names_all(n))
-        if (
+        elif isinstance(node, ast.Delete):
+            for t in node.targets:
+                if (_names_all(t) and module_binding) or (
+                    isinstance(t, ast.Subscript) and _names_all(t.value)
+                ):
+                    return True
+        elif (
             isinstance(node, ast.Call)
             and isinstance(node.func, ast.Attribute)
             and _names_all(node.func.value)
+            and node.func.attr in _MUTATING_METHODS
         ):
-            return True  # __all__.append/extend/remove/...
-    return writes > 1
+            return True
+        return any(visit(c, in_function, global_all) for c in ast.iter_child_nodes(node))
+
+    if visit(tree, False, False):
+        return True
+    return bindings > 1
 
 
 def _names_all(node: ast.AST) -> bool:
