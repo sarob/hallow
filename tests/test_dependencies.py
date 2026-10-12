@@ -232,3 +232,78 @@ def test_plugins_activate_from_requirements_txt(tmp_path):
 
     _write(tmp_path, {"requirements.txt": "fastapi==0.110\n"})
     assert [type(p).__name__ for p in load_plugins(tmp_path).plugins] == ["FastAPIPlugin"]
+
+
+# ── review of #17, round 2 ──
+
+
+def _lines(tmp_path, toml: str) -> list[tuple[str, int]]:
+    _write(tmp_path, {"pyproject.toml": toml})
+    return [(d.name, d.line) for d in read_declared_dependencies(tmp_path)]
+
+
+def test_location_several_entries_on_one_line(tmp_path):
+    toml = '[project]\nname = "demo"\ndependencies = ["requests", "flask"]\n'
+    assert _lines(tmp_path, toml) == [("requests", 3), ("flask", 3)]
+
+
+def test_location_ignores_same_text_in_other_values_of_the_table(tmp_path):
+    toml = '[project]\nname = "demo"\ndescription = "requests"\ndependencies = ["requests"]\n'
+    assert _lines(tmp_path, toml) == [("requests", 4)]
+
+
+def test_location_with_escapes_quoted_tables_and_inline_tables(tmp_path):
+    toml = (
+        '["project"]\n'
+        'name = "demo"\n'
+        "dependencies = [\n"
+        '    "requ\\u0065sts",  # escaped\n'
+        "    'flask',\n"
+        "]\n"
+        'optional-dependencies = { cli = ["typer"], dev = [\n'
+        '    "pytest",\n'
+        "] }\n"
+        "[dependency-groups]\n"
+        'lint = ["ruff", {include-group = "dev"}]\n'
+    )
+    assert _lines(tmp_path, toml) == [
+        ("requests", 4),
+        ("flask", 5),
+        ("typer", 7),
+        ("pytest", 8),
+        ("ruff", 11),
+    ]
+
+
+def test_unused_finding_points_at_the_second_inline_entry(tmp_path):
+    _write(
+        tmp_path,
+        {
+            "pyproject.toml": '[project]\nname = "demo"\ndependencies = ["requests", "flask"]\n',
+            "app.py": "import requests\nrequests.get('x')\n",
+        },
+    )
+    unused = [
+        (f.location.file, f.location.line)
+        for f in analyze(HallowConfig(root=tmp_path)).findings
+        if f.rule.value == "unused-dependencies"
+    ]
+    assert unused == [("pyproject.toml", 3)]
+
+
+def test_unlisted_detection_still_reports_undeclared_imports_with_includes(tmp_path):
+    # pairs with test_unlisted_detection_sees_included_files: detection is on
+    _write(
+        tmp_path,
+        {
+            "requirements.txt": "-rreq/base.txt\n",
+            "req/base.txt": "flask\n",
+            "app.py": "import flask\nimport httpx\nflask.Flask(httpx)\n",
+        },
+    )
+    unlisted = [
+        f.message
+        for f in analyze(HallowConfig(root=tmp_path)).findings
+        if f.rule.value == "unlisted-dependencies"
+    ]
+    assert len(unlisted) == 1 and "'httpx'" in unlisted[0]
