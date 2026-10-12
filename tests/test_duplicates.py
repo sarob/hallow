@@ -2,8 +2,11 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from tempfile import TemporaryDirectory
+
+import pytest
 
 from hallow.config.loader import HallowConfig
 from hallow.core.duplicates import detect_duplicates, tokenize_file
@@ -168,3 +171,36 @@ def test_syntax_error_file_skipped():
         _write_file(root, "broken.py", "def bad(:\n")
         tokens = tokenize_file(root / "broken.py", root, "strict")
         assert len(tokens) == 0 or isinstance(tokens, list)
+
+
+def _tokens(src: str, mode: str) -> list[str]:
+    with TemporaryDirectory() as tmpdir:
+        root = Path(tmpdir)
+        p = _write_file(root, "a.py", src)
+        return [t.value for t in tokenize_file(p, root, mode)]
+
+
+def test_fstring_text_blinding_by_mode():
+    src = 'x = f"a{b}c"\n'
+    if sys.version_info >= (3, 12):
+        # 3.12+ tokenizes f-strings piecewise: literal text is FSTRING_MIDDLE,
+        # the interpolation keeps its own tokens.
+        assert _tokens(src, "strict") == ["x", "=", 'f"', "a", "{", "b", "}", "c", '"']
+        assert _tokens(src, "mild") == _tokens(src, "strict")
+        assert _tokens(src, "weak") == ["x", "=", 'f"', "$STR", "{", "b", "}", "$STR", '"']
+        assert _tokens(src, "semantic") == [
+            "$ID", "=", 'f"', "$STR", "{", "$ID", "}", "$STR", '"',
+        ]  # fmt: skip
+    else:
+        # 3.11 tokenizes the whole f-string as one STRING token.
+        assert _tokens(src, "strict") == ["x", "=", 'f"a{b}c"']
+        assert _tokens(src, "weak") == ["x", "=", "$STR"]
+        assert _tokens(src, "semantic") == ["$ID", "=", "$STR"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 14), reason="t-strings are Python 3.14+")
+def test_tstring_text_blinding_by_mode():
+    src = 'y = t"a{b}"\n'
+    assert _tokens(src, "strict") == ["y", "=", 't"', "a", "{", "b", "}", '"']
+    assert _tokens(src, "weak") == ["y", "=", 't"', "$STR", "{", "b", "}", '"']
+    assert _tokens(src, "semantic") == ["$ID", "=", 't"', "$STR", "{", "$ID", "}", '"']
