@@ -192,6 +192,9 @@ def detect_duplicates(
                     suggestion="Extract duplicate code into a shared function or module",
                     metadata={
                         "fragments": locations,
+                        "fragment_ranges": [
+                            [f.file, f.start_line, f.end_line] for f in group.fragments
+                        ],
                         "token_count": group.token_count,
                         "occurrences": len(group.fragments),
                     },

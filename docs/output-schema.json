@@ -16,6 +16,9 @@
       "$ref": "#/$defs/PruneOutput"
     },
     {
+      "$ref": "#/$defs/AuditOutput"
+    },
+    {
       "$ref": "#/$defs/ErrorOutput"
     }
   ],
@@ -78,6 +81,276 @@
         "description"
       ],
       "title": "Action",
+      "type": "object"
+    },
+    "AuditFindingOutput": {
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "suggestion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggestion"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        },
+        "introduced": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Introduced"
+        },
+        "demotion_reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Demotion Reason"
+        }
+      },
+      "required": [
+        "finding_id",
+        "rule",
+        "severity",
+        "message",
+        "location"
+      ],
+      "title": "AuditFindingOutput",
+      "type": "object"
+    },
+    "AuditOutput": {
+      "properties": {
+        "kind": {
+          "const": "audit",
+          "default": "audit",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
+        "command": {
+          "const": "audit",
+          "default": "audit",
+          "title": "Command",
+          "type": "string"
+        },
+        "verdict": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail"
+          ],
+          "title": "Verdict",
+          "type": "string"
+        },
+        "gate": {
+          "enum": [
+            "new-only",
+            "all"
+          ],
+          "title": "Gate",
+          "type": "string"
+        },
+        "base_ref": {
+          "title": "Base Ref",
+          "type": "string"
+        },
+        "base_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Base Description"
+        },
+        "merge_base": {
+          "title": "Merge Base",
+          "type": "string"
+        },
+        "head_sha": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Head Sha"
+        },
+        "changed_files_count": {
+          "title": "Changed Files Count",
+          "type": "integer"
+        },
+        "changed_files": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Changed Files",
+          "type": "array"
+        },
+        "base_snapshot_skipped": {
+          "title": "Base Snapshot Skipped",
+          "type": "boolean"
+        },
+        "summary": {
+          "$ref": "#/$defs/AuditSummary"
+        },
+        "attribution": {
+          "additionalProperties": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Attribution",
+          "type": "object"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/AuditFindingOutput"
+          },
+          "title": "Findings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "verdict",
+        "gate",
+        "base_ref",
+        "merge_base",
+        "changed_files_count",
+        "changed_files",
+        "base_snapshot_skipped",
+        "summary",
+        "attribution",
+        "findings"
+      ],
+      "title": "AuditOutput",
+      "type": "object"
+    },
+    "AuditSummary": {
+      "properties": {
+        "findings": {
+          "title": "Findings",
+          "type": "integer"
+        },
+        "errors": {
+          "title": "Errors",
+          "type": "integer"
+        },
+        "warnings": {
+          "title": "Warnings",
+          "type": "integer"
+        },
+        "introduced": {
+          "title": "Introduced",
+          "type": "integer"
+        },
+        "inherited": {
+          "title": "Inherited",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "findings",
+        "errors",
+        "warnings",
+        "introduced",
+        "inherited"
+      ],
+      "title": "AuditSummary",
       "type": "object"
     },
     "BaselineStaleness": {
