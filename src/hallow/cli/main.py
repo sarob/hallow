@@ -564,6 +564,7 @@ def _run_security(
 ) -> None:
     from hallow.config import load_config
     from hallow.core.discovery import discover_python_files
+    from hallow.core.suppressions import apply_suppressions
     from hallow.extract import extract_modules_parallel
     from hallow.security import detect_hardcoded_secrets, detect_taint_sinks
     from hallow.types import AnalysisResults
@@ -576,6 +577,9 @@ def _run_security(
     findings = []
     findings.extend(detect_hardcoded_secrets(modules, root_path, cfg))
     findings.extend(detect_taint_sinks(modules, root_path, cfg))
+    # Same suppressions as the full analysis; no stale reporting, since the
+    # dead-code rules did not run here.
+    findings = apply_suppressions(findings, modules, cfg, report_stale=False)
 
     results = AnalysisResults(
         findings=findings,
