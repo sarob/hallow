@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -27,11 +28,17 @@ _SECRET_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Generic secret",
         re.compile(
             r"(?i)(?:password|passwd|secret|api[_\-]?key|auth[_\-]?token)"
-            r"\s*[=:]\s*['\"][^'\"]{8,}['\"]"
+            r"\s*[=:]\s*['\"](?P<value>[^'\"]{8,})['\"]"
         ),
     ),
-    ("Hex token (32+)", re.compile(r"(?i)(?:token|key|secret)\s*[=:]\s*['\"][0-9a-f]{32,}['\"]")),
+    (
+        "Hex token (32+)",
+        re.compile(r"(?i)(?:token|key|secret)\s*[=:]\s*['\"](?P<value>[0-9a-f]{32,})['\"]"),
+    ),
 ]
+
+# The identifier left of the `=`/`:` a pattern matched inside.
+_KEY_BEFORE_RE = re.compile(r"([A-Za-z_][A-Za-z0-9_.\-]*)['\"]?\s*$")
 
 _SAFE_PATTERNS = frozenset(
     {
@@ -78,31 +85,161 @@ def detect_hardcoded_secrets(
         except OSError:
             continue
 
+        labels = _enum_label_positions(source)
         for line_num, line in enumerate(source.splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#") or not stripped:
                 continue
 
-            for label, pattern in _SECRET_PATTERNS:
-                match = pattern.search(line)
-                if match and not _is_safe_context(line, match.group()):
-                    findings.append(
-                        Finding(
-                            rule=RuleId.HARDCODED_SECRET,
-                            severity=severity,
-                            message=f"Potential {label} detected",
-                            location=Location(
-                                file=path,
-                                line=line_num,
-                                col=match.start(),
-                            ),
-                            suggestion="Move secrets to environment variables or a secrets manager",
-                            metadata={"kind": label},
-                        )
-                    )
-                    break
+            hit = _first_secret(line, line_num, labels)
+            if hit is None:
+                continue
+            label, match = hit
+            findings.append(
+                Finding(
+                    rule=RuleId.HARDCODED_SECRET,
+                    severity=severity,
+                    message=f"Potential {label} detected",
+                    location=Location(file=path, line=line_num, col=match.start()),
+                    suggestion="Move secrets to environment variables or a secrets manager",
+                    metadata={"kind": label},
+                )
+            )
 
     return findings
+
+
+def _first_secret(
+    line: str, line_num: int, labels: set[tuple[int, int]]
+) -> tuple[str, re.Match[str]] | None:
+    """The first reportable match on a line (one finding per line).
+
+    Later matches are still examined after an exempt enum label, so a label
+    does not hide a real secret further along the same line.
+    """
+    for label, pattern in _SECRET_PATTERNS:
+        for match in pattern.finditer(line):
+            if _is_safe_context(line, match.group()):
+                break
+            value_start = match.start("value") if "value" in match.groupdict() else -1
+            # the opening quote of an exempt label literal sits at (line, col)
+            if value_start > 0 and (line_num, value_start - 1) in labels:
+                continue
+            return label, match
+    return None
+
+
+_ENUM_TYPES = frozenset({"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag", "ReprEnum"})
+
+
+def _enum_label_positions(source: str) -> set[tuple[int, int]]:
+    """(line, column) of each enum label literal: a member whose value spells its name.
+
+    Only exact members count: `NAME = "name"` (a single name target and a
+    plain string value) in the body of a class whose base resolves to the
+    `enum` module, through `from enum import X [as Y]`, `import enum [as e]`,
+    or another such class in the same file. Anything unresolved, nested in an
+    expression, or with a different value stays reportable.
+    """
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+
+    enum_names: set[str] = set()  # local names bound to enum base types
+    enum_modules: set[str] = set()  # local names bound to the enum module
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module == "enum" and node.level == 0:
+            for alias in node.names:
+                if alias.name in _ENUM_TYPES:
+                    enum_names.add(alias.asname or alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name == "enum":
+                    enum_modules.add(alias.asname or "enum")
+
+    # A name trusted as an enum base must be bound exactly once in the file
+    # (by its import or class statement). Any other binding anywhere —
+    # `Base = object`, a def, a parameter, another import, even in an
+    # unrelated scope — and the name is not trusted; the label is then
+    # reported, the safe direction (no scope resolution is attempted).
+    bindings: dict[str, int] = {}
+    for node in ast.walk(tree):
+        names: list[str] = []
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names = [node.id]
+        elif isinstance(node, ast.arg):  # function and lambda parameters
+            names = [node.arg]
+        elif isinstance(
+            node,
+            (ast.ExceptHandler, ast.MatchAs, ast.MatchStar)
+            + (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef),
+        ):
+            # except-as, match captures, def/class names (None when unnamed)
+            names = [node.name] if node.name else []
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [(a.asname or a.name).split(".")[0] for a in node.names]
+        for name in names:
+            bindings[name] = bindings.get(name, 0) + 1
+    enum_names = {n for n in enum_names if bindings.get(n, 0) == 1}
+    enum_modules = {n for n in enum_modules if bindings.get(n, 0) == 1}
+
+    def is_enum_base(base: ast.expr) -> bool:
+        if isinstance(base, ast.Name):
+            return base.id in enum_names
+        return (
+            isinstance(base, ast.Attribute)
+            and isinstance(base.value, ast.Name)
+            and base.value.id in enum_modules
+            and base.attr in _ENUM_TYPES
+        )
+
+    classes = [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]
+    enum_classes: list[ast.ClassDef] = []
+    changed = True
+    while changed:  # classes deriving from enum classes defined in this file
+        changed = False
+        for cls in classes:
+            if cls not in enum_classes and any(is_enum_base(b) for b in cls.bases):
+                enum_classes.append(cls)
+                if bindings.get(cls.name, 0) == 1:
+                    enum_names.add(cls.name)
+                changed = True
+
+    lines = source.splitlines()
+    positions: set[tuple[int, int]] = set()
+    for cls in enum_classes:
+        for stmt in cls.body:
+            if not (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1):
+                continue
+            target, value = stmt.targets[0], stmt.value
+            if (
+                isinstance(target, ast.Name)
+                and isinstance(value, ast.Constant)
+                and isinstance(value.value, str)
+                and _norm(value.value) == _norm(target.id)
+            ):
+                positions.add((value.lineno, _char_col(lines, value.lineno, value.col_offset)))
+    return positions
+
+
+def _char_col(lines: list[str], lineno: int, byte_col: int) -> int:
+    """ast col_offset counts UTF-8 bytes; the regex matches count characters."""
+    if not 1 <= lineno <= len(lines):
+        return -1
+    return len(lines[lineno - 1].encode("utf-8")[:byte_col].decode("utf-8", errors="ignore"))
+
+
+def _norm(text: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", text.lower())
+
+
+def _assigned_key(line: str, match: re.Match[str]) -> str:
+    """The full identifier being assigned, e.g. `HARDCODED_SECRET` for a match on `SECRET`."""
+    sep = re.search(r"[=:]", line[match.start() :])
+    end = match.start() + sep.start() if sep else match.start()
+    m = _KEY_BEFORE_RE.search(line[:end])
+    return m.group(1) if m else ""
 
 
 def _is_safe_context(line: str, matched: str) -> bool:
