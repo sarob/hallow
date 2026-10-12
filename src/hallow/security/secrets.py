@@ -106,6 +106,7 @@ def detect_hardcoded_secrets(
                             line=line_num,
                             col=match.start(),
                         ),
+                        symbol=f"{label}:{key}" if key else label,
                         suggestion="Move secrets to environment variables or a secrets manager",
                         metadata={"kind": label},
                     )

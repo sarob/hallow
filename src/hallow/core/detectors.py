@@ -157,6 +157,7 @@ def detect_unused_imports(
                             severity=severity,
                             message=f"'{src_name}' imported from '{imp.module}' is unused",
                             location=Location(file=path, line=imp.line, col=imp.col),
+                            symbol=bound,
                             fix=FixAction(kind="remove_import", target=src_name),
                         )
                     )
@@ -172,6 +173,7 @@ def detect_unused_imports(
                             severity=severity,
                             message=f"'{bound}' (import {imp.module}) is unused",
                             location=Location(file=path, line=imp.line, col=imp.col),
+                            symbol=bound,
                             fix=FixAction(kind="remove_import", target=bound),
                         )
                     )
@@ -264,6 +266,7 @@ def detect_unused_exports(
                     severity=sev,
                     message=f"'{export.name}' is defined but never used or imported",
                     location=Location(file=path, line=export.line, col=export.col),
+                    symbol=export.name,
                     suggestion=f"Remove '{export.name}' if it is no longer used",
                     fix=FixAction(kind="remove_export", target=export.name, auto_fixable=False),
                 )
@@ -308,6 +311,7 @@ def detect_unused_dependencies(
                     location=Location(file=dep.file, line=dep.line),
                     suggestion=f"Remove '{dep.name}' from {dep.file} if no longer needed",
                     fix=FixAction(kind="remove_dependency", target=dep.name),
+                    symbol=dep.name,
                 )
             )
 
@@ -363,6 +367,7 @@ def detect_unlisted_dependencies(
                 message=f"'{imp}' is imported but not declared in {manifest}",
                 location=Location(file=file, line=line, col=col),
                 suggestion=f"Add '{imp}' to the dependencies in {manifest}",
+                symbol=imp,
             )
         )
 
@@ -408,6 +413,7 @@ def detect_unused_all_entries(
                     location=Location(file=path, line=module.all_line or 1),
                     suggestion=f"Remove '{name}' from __all__ or define it",
                     fix=FixAction(kind="remove_from_all", target=name, auto_fixable=False),
+                    symbol=name,
                 )
             )
     return findings
@@ -644,6 +650,7 @@ def detect_circular_imports(
                 severity=severity,
                 message=f"Circular import: {chain}",
                 location=Location(file=cycle.modules[0], line=1),
+                symbol="|".join(sorted(cycle.modules)),
                 suggestion="Break the cycle by extracting shared types or using lazy imports",
                 metadata={"modules": cycle.modules, "edges": [list(e) for e in cycle.edges]},
             )

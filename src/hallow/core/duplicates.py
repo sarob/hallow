@@ -7,6 +7,7 @@ longest common run, then collapsed so overlapping shifted windows report once.
 
 from __future__ import annotations
 
+import hashlib
 import tokenize
 from collections import defaultdict
 from io import StringIO
@@ -187,6 +188,7 @@ def detect_duplicates(
                         line=first.start_line,
                         end_line=first.end_line,
                     ),
+                    symbol=group.content_digest,
                     suggestion="Extract duplicate code into a shared function or module",
                     metadata={
                         "fragments": locations,
@@ -269,11 +271,16 @@ def _find_clones(
             for file, start_line, end_line in claimed:
                 used_intervals[file].append((start_line, end_line))
             line_count = max(f.lines_of_code for f in fragments)
+            first = positions[0]
+            digest = hashlib.sha256(
+                "\x00".join(t.value for t in tokens[first : first + length]).encode()
+            ).hexdigest()
             groups.append(
                 DuplicateGroup(
                     fragments=fragments,
                     token_count=length,
                     line_count=line_count,
+                    content_digest=digest,
                 )
             )
 

@@ -64,6 +64,8 @@ class ExportInfo(BaseModel):
 
 class FunctionComplexity(BaseModel):
     name: str
+    # dotted path inside the module, e.g. "Outer.method" or "build.<locals>.inner"
+    qualname: str = ""
     kind: str  # "function", "method", "classmethod", "staticmethod", "property"
     line: int = 0
     end_line: int = 0
@@ -140,9 +142,16 @@ class Finding(BaseModel):
     severity: Severity = Severity.ERROR
     message: str
     location: Location
+    # what the finding is about: the import, export, dependency, function
+    # qualname, ... — the line-free part of the finding's identity
+    symbol: str | None = None
     suggestion: str | None = None
     fix: FixAction | None = None
     metadata: dict[str, Any] = Field(default_factory=dict)
+    # `hl1:<rule>:<16 hex>[~k]`, stable across line moves (see hallow.identity)
+    finding_id: str = ""
+    # canonical `<rule>:<part>...` key that baselines and audit compare
+    key: str = Field(default="", exclude=True)
 
 
 # ── Cycle Types ──
@@ -167,6 +176,8 @@ class DuplicateGroup(BaseModel):
     fragments: list[DuplicateFragment]
     token_count: int = 0
     line_count: int = 0
+    # sha256 of the normalized token sequence the fragments share
+    content_digest: str = ""
 
 
 # ── Health Types ──
@@ -195,6 +206,26 @@ class ProjectHealth(BaseModel):
     hotspots: list[FileHealth] = Field(default_factory=list)
 
 
+# ── Baselines ──
+
+
+class BaselineStaleness(BaseModel):
+    """How a loaded baseline matched this run (after fallow's `baseline_staleness`)."""
+
+    path: str
+    baseline_entries: int = 0
+    matched_entries: int = 0
+    stale_entries: int = 0
+    current_findings: int = 0
+    # some entries matched nothing in this run
+    stale: bool = False
+    # "none", "zero-overlap" (nothing matched) or "partial" (>= 1/4 stale)
+    warning: str = "none"
+    # the file is not a hallow `check` baseline; it suppressed nothing
+    unrecognised_format: bool = False
+    saved_by: str | None = None
+
+
 # ── Analysis Results ──
 
 
@@ -203,6 +234,7 @@ class AnalysisResults(BaseModel):
     cycles: list[ImportCycle] = Field(default_factory=list)
     duplicates: list[DuplicateGroup] = Field(default_factory=list)
     health: ProjectHealth | None = None
+    baseline_staleness: BaselineStaleness | None = None
 
     total_files_scanned: int = 0
     total_issues: int = 0

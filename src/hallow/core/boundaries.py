@@ -104,6 +104,7 @@ def detect_boundary_violations(
                             f"not allowed by boundary rules"
                         ),
                         location=Location(file=path, line=1),
+                        symbol=target,
                         suggestion=(
                             f"Zone '{source_zone}' may only import from: "
                             f"{', '.join(sorted(allowed)) or 'nothing'}"
