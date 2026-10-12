@@ -14,11 +14,12 @@ def _is_project_package(module: str, project_dirs: set[str]) -> bool:
     return base in project_dirs or f"src/{base}" in project_dirs
 
 
-# Attributes every module object has, namespace packages included. Any other
-# requested name — even a dunder like `__vendor__` — is a child module.
+# Attributes a PEP 420 namespace package object always has (importlib sets
+# them; `__file__` and `__doc__` exist with value None). Any other requested
+# name — `__all__`, `__vendor__`, ... — is treated as a child module.
 _MODULE_ATTRIBUTES = frozenset(
     {"__path__", "__name__", "__file__", "__spec__", "__loader__", "__package__", "__doc__",
-     "__dict__", "__builtins__", "__cached__", "__all__"}
+     "__dict__"}
 )  # fmt: skip
 
 
