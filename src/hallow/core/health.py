@@ -154,6 +154,7 @@ def _check_complexity(
                     line=func.line,
                     end_line=func.end_line,
                 ),
+                symbol=func.qualname or func.name,
                 suggestion="Break this function into smaller pieces",
                 metadata={
                     "kind": "cyclomatic",
@@ -175,6 +176,7 @@ def _check_complexity(
                     line=func.line,
                     end_line=func.end_line,
                 ),
+                symbol=func.qualname or func.name,
                 suggestion="Reduce nesting and simplify control flow",
                 metadata={
                     "kind": "cognitive",

@@ -74,6 +74,16 @@ def main(
         help="Check architecture boundaries with a preset: layered, hexagonal, feature-sliced",
         callback=_validate_preset,
     ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Baseline file — only report findings not in baseline",
+    ),
+    save_baseline: Path | None = typer.Option(
+        None,
+        "--save-baseline",
+        help="Save current findings as a new baseline file",
+    ),
     version: bool | None = typer.Option(
         None,
         "--version",
@@ -109,6 +119,8 @@ def main(
         ci=ci,
         changed_since=changed_since,
         boundaries=boundaries,
+        baseline_path=baseline,
+        save_baseline_path=save_baseline,
     )
 
 
@@ -154,6 +166,16 @@ def check(
         help="Check architecture boundaries with a preset: layered, hexagonal, feature-sliced",
         callback=_validate_preset,
     ),
+    baseline: Path | None = typer.Option(
+        None,
+        "--baseline",
+        help="Baseline file — only report findings not in baseline",
+    ),
+    save_baseline: Path | None = typer.Option(
+        None,
+        "--save-baseline",
+        help="Save current findings as a new baseline file",
+    ),
 ) -> None:
     """Run dead code analysis."""
     _run_check(
@@ -164,6 +186,8 @@ def check(
         ci=ci,
         changed_since=changed_since,
         boundaries=boundaries,
+        baseline_path=baseline,
+        save_baseline_path=save_baseline,
     )
 
 
@@ -356,6 +380,8 @@ def _run_check(
     ci: bool,
     changed_since: str | None,
     boundaries: str | None = None,
+    baseline_path: Path | None = None,
+    save_baseline_path: Path | None = None,
 ) -> None:
     from hallow.config import load_config
     from hallow.core import analyze
@@ -375,11 +401,37 @@ def _run_check(
         overrides=overrides or None,
     )
     results = analyze(cfg)
+    results = _apply_baseline(results, baseline_path, save_baseline_path)
 
     _emit_results(results, fmt, output_file)
 
     if ci and results.errors > 0:
         raise typer.Exit(code=1)
+
+
+def _apply_baseline(results, baseline_path: Path | None, save_baseline_path: Path | None):
+    from hallow.core.baseline import filter_baseline, save_baseline
+
+    if save_baseline_path:
+        count = save_baseline(results, save_baseline_path)
+        typer.echo(f"Saved baseline with {count} finding(s) to {save_baseline_path}", err=True)
+
+    if baseline_path:
+        results = filter_baseline(results, baseline_path)
+        st = results.baseline_staleness
+        if st and st.unrecognised_format:
+            typer.echo(
+                f"warning: {baseline_path} is not a hallow check baseline; it suppressed nothing",
+                err=True,
+            )
+        elif st and st.warning != "none":
+            typer.echo(
+                f"warning: baseline {baseline_path} is stale: {st.stale_entries} of "
+                f"{st.baseline_entries} entries match no finding "
+                f"(prune with `hallow baselines prune --baseline {baseline_path}`)",
+                err=True,
+            )
+    return results
 
 
 def _run_audit(
@@ -394,7 +446,6 @@ def _run_audit(
 ) -> None:
     from hallow.config import load_config
     from hallow.core import analyze
-    from hallow.core.baseline import filter_baseline, save_baseline
 
     overrides: dict = {"changed_since": changed_since}
     if ci:
@@ -403,13 +454,7 @@ def _run_audit(
 
     cfg = load_config(root=root, config_path=config_path, overrides=overrides)
     results = analyze(cfg)
-
-    if save_baseline_path:
-        count = save_baseline(results, save_baseline_path)
-        typer.echo(f"Saved baseline with {count} finding(s) to {save_baseline_path}")
-
-    if baseline_path:
-        results = filter_baseline(results, baseline_path)
+    results = _apply_baseline(results, baseline_path, save_baseline_path)
 
     _emit_results(results, fmt, output_file)
 
@@ -607,6 +652,7 @@ def _run_security(
     from hallow.core.discovery import discover_python_files
     from hallow.core.suppressions import apply_suppressions
     from hallow.extract import extract_modules_parallel
+    from hallow.identity import stamp_identities
     from hallow.security import detect_hardcoded_secrets, detect_taint_sinks
     from hallow.types import AnalysisResults
 
@@ -621,6 +667,7 @@ def _run_security(
     # Same suppressions as the full analysis; no stale reporting, since the
     # dead-code rules did not run here.
     findings = apply_suppressions(findings, modules, cfg, report_stale=False)
+    stamp_identities(findings)
 
     results = AnalysisResults(
         findings=findings,
@@ -632,6 +679,55 @@ def _run_security(
     _emit_results(results, fmt, output_file)
 
     if ci and results.errors > 0:
+        raise typer.Exit(code=1)
+
+
+baselines_app = typer.Typer(help="Maintain baseline files.", no_args_is_help=True)
+app.add_typer(baselines_app, name="baselines")
+
+
+@baselines_app.command("prune")
+def baselines_prune(
+    baseline: Path = typer.Option(..., "--baseline", help="Baseline file to prune"),
+    check: bool = typer.Option(
+        False, "--check", help="Change nothing; exit 1 if entries could be pruned"
+    ),
+    root: Path | None = typer.Option(None, "--root", "-r", help="Project root directory"),
+    config: Path | None = typer.Option(None, "--config", "-c", help="Config file path"),
+    format: str = typer.Option("human", "--format", "-f", help="Output format: human, json"),
+) -> None:
+    """Remove baseline entries that no current finding matches. Never adds entries."""
+    import json
+
+    from hallow.config import load_config
+    from hallow.core import analyze
+    from hallow.core.baseline import prune_baseline
+
+    cfg = load_config(root=root, config_path=config)
+    item = prune_baseline(analyze(cfg), baseline, check=check)
+
+    if format == "json":
+        typer.echo(
+            json.dumps(
+                {"kind": "baselines-prune", "schema_version": 1, "check": check, "files": [item]},
+                indent=2,
+            )
+        )
+    else:
+        status = item["status"]
+        if status in ("refused", "error"):
+            typer.echo(f"{baseline}: {status} — {item['reason']}", err=True)
+        else:
+            removed = item["entries_before"] - item["entries_after"]
+            typer.echo(
+                f"{baseline}: {status} ({removed} stale of {item['entries_before']} entries)"
+            )
+            for r in item["removed"]:
+                typer.echo(f"  - {r['key']}" + (f" (x{r['count']})" if r["count"] > 1 else ""))
+
+    if item["status"] in ("refused", "error"):
+        raise typer.Exit(code=2)
+    if check and item["status"] == "would-prune":
         raise typer.Exit(code=1)
 
 

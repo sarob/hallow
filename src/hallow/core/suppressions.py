@@ -84,6 +84,7 @@ def apply_suppressions(
                     severity=severity,
                     message=message,
                     location=Location(file=path, line=s.line),
+                    symbol=f"{s.kind}:{','.join(sorted(s.rules))}",
                     suggestion="Remove the suppression comment, or fix the rule name",
                 )
                 out.append((path, s, finding))

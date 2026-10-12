@@ -139,3 +139,24 @@ def test_syntax_error_returns_none():
     info = extract_module(path, root=path.parent)
     path.unlink()
     assert info is None
+
+
+def test_function_qualnames():
+    info = _extract_source("""
+        def top(): ...
+        class Outer:
+            def method(self): ...
+            class Inner:
+                @staticmethod
+                def deep(): ...
+        def make():
+            def inner(): ...
+    """)
+    got = {(f.qualname, f.kind) for f in info.functions}
+    assert got == {
+        ("top", "function"),
+        ("Outer.method", "method"),
+        ("Outer.Inner.deep", "staticmethod"),
+        ("make", "function"),
+        ("make.<locals>.inner", "function"),
+    }

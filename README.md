@@ -231,6 +231,20 @@ def nightly_rollup(): ...
 
 `hallow-ignore` applies to its own line, `hallow-ignore-next-line` to the next line of code, and `hallow-ignore-file` to the whole file. Rule names are comma- or space-separated; with none, every rule is suppressed. A suppression that no longer matches a finding is reported as `stale-suppression`, and so is one naming an unknown rule. A `stale-suppression` finding can itself be suppressed by another comment, never by the comment it reports on. `# noqa` / `# noqa: F401` still suppresses unused imports.
 
+## Finding IDs and baselines
+
+Every finding carries a `finding_id` such as `hl1:unused-functions:81a349a3b9ea3b15`. It is a hash of the rule, the file path and the symbol, never the line, so moving code keeps the id; renaming the file or the symbol changes it. Repeats of the same key get `~1`, `~2`, … in line order. SARIF output carries it as a `partialFingerprints` entry and CodeClimate output as its `fingerprint`.
+
+Baselines record findings by the same line-free key:
+
+```bash
+hallow check --save-baseline hallow-baseline.json   # once
+hallow check --baseline hallow-baseline.json        # later runs report only new findings
+hallow baselines prune --baseline hallow-baseline.json [--check]
+```
+
+A baseline stores one entry per occurrence, so N saved entries hide at most N current findings. The JSON output's `baseline_staleness` reports how many entries matched; when a quarter or more match nothing, a warning goes to stderr. `baselines prune` removes entries that no current finding matches and never adds any (`--check` changes nothing and exits 1 if there is something to prune). A file that is not a hallow `check` baseline — including the line-keyed format earlier versions wrote — suppresses nothing and is reported as unrecognised; re-save it.
+
 ## Python-Specific Design
 
 Hallow is not a port of Fallow — it's built for Python's idioms:

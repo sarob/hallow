@@ -495,42 +495,70 @@ def _compute_cognitive(node: ast.AST, nesting: int = 0) -> int:
     return score
 
 
-def _extract_functions(tree: ast.Module) -> list[FunctionComplexity]:
-    results: list[FunctionComplexity] = []
+class _FunctionCollector(ast.NodeVisitor):
+    """Per-function complexity, with the dotted qualname of each function."""
 
-    for node in ast.walk(tree):
-        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
-            kind = "function"
-            for parent in ast.walk(tree):
-                if isinstance(parent, ast.ClassDef):
-                    for child in ast.iter_child_nodes(parent):
-                        if child is node:
-                            kind = "method"
-                            for dec in node.decorator_list:
-                                if isinstance(dec, ast.Name):
-                                    if dec.id == "classmethod":
-                                        kind = "classmethod"
-                                    elif dec.id == "staticmethod":
-                                        kind = "staticmethod"
-                                    elif dec.id == "property":
-                                        kind = "property"
+    def __init__(self) -> None:
+        self.results: list[FunctionComplexity] = []
+        self._stack: list[tuple[str, bool]] = []  # (name, is_class)
 
-            end_line = getattr(node, "end_lineno", node.lineno)
-            results.append(
-                FunctionComplexity(
-                    name=node.name,
-                    kind=kind,
-                    line=node.lineno,
-                    end_line=end_line or node.lineno,
-                    cyclomatic=_compute_cyclomatic(node),
-                    cognitive=_compute_cognitive(node),
-                    parameters=(
-                        len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
-                    ),
-                    lines_of_code=(end_line or node.lineno) - node.lineno + 1,
-                )
+    def visit_ClassDef(self, node: ast.ClassDef) -> None:
+        self._stack.append((node.name, True))
+        self.generic_visit(node)
+        self._stack.pop()
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        kind = "function"
+        if self._stack and self._stack[-1][1]:
+            kind = "method"
+            for dec in node.decorator_list:
+                if isinstance(dec, ast.Name):
+                    if dec.id == "classmethod":
+                        kind = "classmethod"
+                    elif dec.id == "staticmethod":
+                        kind = "staticmethod"
+                    elif dec.id == "property":
+                        kind = "property"
+
+        parts: list[str] = []
+        for name, is_class in self._stack:
+            parts.append(name)
+            if not is_class:
+                parts.append("<locals>")
+        parts.append(node.name)
+
+        end_line = getattr(node, "end_lineno", node.lineno) or node.lineno
+        self.results.append(
+            FunctionComplexity(
+                name=node.name,
+                qualname=".".join(parts),
+                kind=kind,
+                line=node.lineno,
+                end_line=end_line,
+                cyclomatic=_compute_cyclomatic(node),
+                cognitive=_compute_cognitive(node),
+                parameters=(
+                    len(node.args.args) + len(node.args.posonlyargs) + len(node.args.kwonlyargs)
+                ),
+                lines_of_code=end_line - node.lineno + 1,
             )
-    return results
+        )
+
+        self._stack.append((node.name, False))
+        self.generic_visit(node)
+        self._stack.pop()
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+
+def _extract_functions(tree: ast.Module) -> list[FunctionComplexity]:
+    collector = _FunctionCollector()
+    collector.visit(tree)
+    return collector.results
 
 
 def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:

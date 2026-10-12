@@ -79,6 +79,7 @@ def test_renamed_copy_matches_only_in_semantic_mode():
         cfg.duplicates.mode = "semantic"
         groups, _ = detect_duplicates(files, root, cfg)
         assert len(groups) == 1
+        assert len(groups[0].content_digest) == 64
 
 
 def test_no_duplicates_in_unique_code():

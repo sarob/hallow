@@ -103,6 +103,9 @@ def _finding_to_result(finding: Finding, rule_index: int) -> dict:
             }
         ],
     }
+    if finding.finding_id:
+        # GitHub code scanning matches alerts across commits by partialFingerprints.
+        result["partialFingerprints"] = {"hallowFindingId/v1": finding.finding_id}
     if finding.suggestion:
         result["fixes"] = [
             {

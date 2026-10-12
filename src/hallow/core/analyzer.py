@@ -19,6 +19,7 @@ from hallow.core.health import compute_project_health, detect_high_complexity
 from hallow.core.suppressions import apply_suppressions
 from hallow.extract import extract_modules_parallel
 from hallow.graph import ModuleGraph
+from hallow.identity import stamp_identities
 from hallow.plugins import load_plugins
 from hallow.security import detect_hardcoded_secrets, detect_taint_sinks
 from hallow.types import AnalysisResults
@@ -61,6 +62,7 @@ def analyze(config: HallowConfig) -> AnalysisResults:
 
     filtered = _apply_plugin_suppressions(findings, plugins)
     filtered = apply_suppressions(filtered, modules, config, report_stale=True)
+    stamp_identities(filtered)
 
     health = compute_project_health(modules, config)
 

@@ -44,8 +44,9 @@ def _finding_to_issue(finding: Finding) -> dict:
         "check_name": finding.rule.value,
         "description": finding.message,
         "severity": _severity_to_cc(finding.severity),
+        # line-free, so GitLab keeps tracking an issue when code above it moves
         "fingerprint": _fingerprint(
-            f"{finding.rule.value}:{finding.location.file}:{finding.location.line}:{finding.message}"
+            finding.finding_id or f"{finding.rule.value}:{finding.message}"
         ),
         "location": {
             "path": finding.location.file,

@@ -104,6 +104,7 @@ def _scan_tree(
                     message=f"Dangerous function '{func_name}' called with dynamic argument",
                     location=Location(file=path, line=node.lineno, col=node.col_offset),
                     suggestion=f"Avoid passing user-controlled data to '{func_name}'",
+                    symbol=func_name,
                     metadata={"sink": func_name, "kind": "dangerous_call"},
                 )
             )
@@ -116,6 +117,7 @@ def _scan_tree(
                     message=f"Potential SQL injection via '{func_name}' with string formatting",
                     location=Location(file=path, line=node.lineno, col=node.col_offset),
                     suggestion="Use parameterized queries instead of string formatting",
+                    symbol=func_name,
                     metadata={"sink": func_name, "kind": "sql_injection"},
                 )
             )

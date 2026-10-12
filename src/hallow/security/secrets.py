@@ -95,12 +95,14 @@ def detect_hardcoded_secrets(
             if hit is None:
                 continue
             label, match = hit
+            key = _assigned_key(line, match)
             findings.append(
                 Finding(
                     rule=RuleId.HARDCODED_SECRET,
                     severity=severity,
                     message=f"Potential {label} detected",
                     location=Location(file=path, line=line_num, col=match.start()),
+                    symbol=f"{label}:{key}" if key else label,
                     suggestion="Move secrets to environment variables or a secrets manager",
                     metadata={"kind": label},
                 )
