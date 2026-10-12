@@ -213,6 +213,23 @@ unused-files = "error"
 unused-imports = "warn"
 ```
 
+## Suppressing findings
+
+Suppress a finding in the source, optionally with a reason after `--`:
+
+```python
+import plugin_hooks  # hallow-ignore unused-imports -- registers hooks on import
+
+
+# hallow-ignore-next-line unused-functions -- called by name from the job runner
+def nightly_rollup(): ...
+
+
+# hallow-ignore-file unused-files
+```
+
+`hallow-ignore` applies to its own line, `hallow-ignore-next-line` to the next line of code, and `hallow-ignore-file` to the whole file. Rule names are comma- or space-separated; with none, every rule is suppressed. A suppression that no longer matches a finding is reported as `stale-suppression`, and so is one naming an unknown rule. A `stale-suppression` finding can itself be suppressed by another comment, never by the comment it reports on. `# noqa` / `# noqa: F401` still suppresses unused imports.
+
 ## Python-Specific Design
 
 Hallow is not a port of Fallow — it's built for Python's idioms:

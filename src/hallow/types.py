@@ -73,6 +73,20 @@ class FunctionComplexity(BaseModel):
     lines_of_code: int = 0
 
 
+class Suppression(BaseModel):
+    """A `# hallow-ignore` comment.
+
+    `kind` is "line" (same line), "next-line" (the next code line) or "file".
+    An empty `rules` list suppresses every rule.
+    """
+
+    kind: str
+    line: int
+    target_line: int | None = None
+    rules: list[str] = Field(default_factory=list)
+    reason: str | None = None
+
+
 class ModuleInfo(BaseModel):
     path: str
     package: str = ""
@@ -88,6 +102,7 @@ class ModuleInfo(BaseModel):
     accessed_attributes: set[str] = Field(default_factory=set)
     # physical lines carrying a `# noqa` that suppresses unused-imports (F401)
     noqa_lines: set[int] = Field(default_factory=set)
+    suppressions: list[Suppression] = Field(default_factory=list)
     docstring: str | None = None
     is_init: bool = False
     is_main: bool = False
@@ -189,7 +204,11 @@ class AnalysisResults(BaseModel):
     warnings: int = 0
 
     def compute_totals(self) -> None:
-        self.total_issues = len(self.findings) + len(self.cycles) + len(self.duplicates)
+        # total_issues is the number of reported findings. `cycles` and
+        # `duplicates` are supporting data: an enabled circular-dependencies or
+        # duplicate-code rule reports each as a finding; with the rule off (or
+        # the finding suppressed) the data remains but is not an issue.
+        self.total_issues = len(self.findings)
         self.errors = sum(1 for f in self.findings if f.severity == Severity.ERROR)
         self.warnings = sum(1 for f in self.findings if f.severity == Severity.WARN)
 
