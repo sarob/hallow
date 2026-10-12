@@ -156,25 +156,24 @@ def _remove_requirement_lines(
     dry_run: bool,
     result: FixResult,
 ) -> None:
-    from hallow.core.dependencies import requirement_name
+    from hallow.core.dependencies import logical_requirement_lines, requirement_line_name
 
     try:
-        lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+        text = path.read_text(encoding="utf-8")
     except OSError:
         return
 
-    kept: list[str] = []
-    removed = False
-    for line in lines:
-        stripped = line.split(" #", 1)[0].strip()
-        name = None if stripped.startswith(("#", "-")) else requirement_name(stripped)
+    lines = text.splitlines(keepends=True)
+    drop: set[int] = set()
+    for first, last, logical in logical_requirement_lines(text):
+        name = requirement_line_name(logical)
         if name and name in dep_names:
+            # the whole logical requirement, continuation lines included
+            drop.update(range(first, last + 1))
             result.removed_deps.append(name)
-            removed = True
-            continue
-        kept.append(line)
 
-    if not dry_run and removed:
+    if not dry_run and drop:
+        kept = [line for i, line in enumerate(lines, 1) if i not in drop]
         path.write_text("".join(kept), encoding="utf-8")
 
 
@@ -228,10 +227,13 @@ def _remove_pyproject_deps(
 
 
 def _extract_dep_name(line: str) -> str | None:
-    cleaned = line.strip().strip('"').strip("'").strip(",")
-    if not cleaned:
-        return None
-    name = cleaned.split(">")[0].split("<")[0].split("=")[0].split("[")[0].split(";")[0].strip()
-    if name:
-        return name.lower().replace("-", "_").replace(".", "_")
-    return None
+    """Distribution name of one `"spec",` line in a pyproject dependency array.
+
+    Uses the same PEP 508 parser as the detectors, so the fixer and the
+    finding agree on the name (`"foo--bar>=1"` -> foo_bar, `"requests~=2"`
+    -> requests).
+    """
+    from hallow.core.dependencies import requirement_name
+
+    cleaned = line.strip().rstrip(",").strip().strip('"').strip("'")
+    return requirement_name(cleaned) if cleaned else None

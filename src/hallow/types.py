@@ -245,8 +245,10 @@ class AnalysisResults(BaseModel):
     warnings: int = 0
 
     def compute_totals(self) -> None:
-        # Cycles and duplicate groups each carry a finding of their own, so the
-        # findings list is the complete count.
+        # total_issues is the number of reported findings. `cycles` and
+        # `duplicates` are supporting data: an enabled circular-dependencies or
+        # duplicate-code rule reports each as a finding; with the rule off (or
+        # the finding suppressed) the data remains but is not an issue.
         self.total_issues = len(self.findings)
         self.errors = sum(1 for f in self.findings if f.severity == Severity.ERROR)
         self.warnings = sum(1 for f in self.findings if f.severity == Severity.WARN)
