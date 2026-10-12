@@ -150,7 +150,9 @@ def _print_health_summary(console: Console, health: ProjectHealth) -> None:
 
 
 def format_json(results: AnalysisResults, file: Any = None) -> str:
-    output = results.model_dump(mode="json")
+    from hallow.output.envelope import check_output
+
+    output = check_output(results, "check", 0, {}).model_dump(mode="json")
     text = json.dumps(output, indent=2)
     if file:
         file.write(text)
@@ -167,10 +169,6 @@ def format_compact(results: AnalysisResults, file: Any = None) -> None:
         console.print(
             f"{finding.location.file}:{line}: {icon} {finding.rule.value}: {finding.message}"
         )
-
-    for cycle in results.cycles:
-        chain = " -> ".join(cycle.modules)
-        console.print(f"circular-dependencies: {chain}")
 
 
 def format_health(

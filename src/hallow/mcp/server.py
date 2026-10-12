@@ -209,7 +209,9 @@ def _dispatch_tool(name: str, args: dict) -> Any:
         fmt = args.get("format", "json")
         results = detect_dead_code(root=root)
         if fmt == "json":
-            return results.model_dump(mode="json")
+            from hallow.output.envelope import check_output
+
+            return check_output(results, "check", 0, {}).model_dump(mode="json")
         from hallow.output import format_results
 
         return format_results(results, fmt=fmt)

@@ -30,35 +30,6 @@ def _build_run(results: AnalysisResults) -> dict:
         rule_idx = _ensure_rule(finding, rules_seen, rules)
         sarif_results.append(_finding_to_result(finding, rule_idx))
 
-    for cycle in results.cycles:
-        rule_id = "circular-dependencies"
-        if rule_id not in rules_seen:
-            rules_seen[rule_id] = len(rules)
-            rules.append(
-                {
-                    "id": rule_id,
-                    "shortDescription": {"text": "Circular import dependency"},
-                    "defaultConfiguration": {"level": "error"},
-                }
-            )
-        chain = " -> ".join(cycle.modules + [cycle.modules[0]])
-        sarif_results.append(
-            {
-                "ruleId": rule_id,
-                "ruleIndex": rules_seen[rule_id],
-                "level": "error",
-                "message": {"text": f"Circular import: {chain}"},
-                "locations": [
-                    {
-                        "physicalLocation": {
-                            "artifactLocation": {"uri": cycle.modules[0]},
-                            "region": {"startLine": 1},
-                        }
-                    }
-                ],
-            }
-        )
-
     return {
         "tool": {
             "driver": {
