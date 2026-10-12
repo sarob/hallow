@@ -153,7 +153,9 @@ def test_security_command_honours_suppressions(tmp_path):
     (tmp_path / "app.py").write_text(token + "  # hallow-ignore hardcoded-secret -- fixture\n")
     (tmp_path / "control.py").write_text(token + "\n")
     result = CliRunner().invoke(app, ["security", "--root", str(tmp_path), "-f", "compact"])
-    assert result.exception is None, result.exception
+    # a crash is an exception other than the SystemExit that carries the exit code
+    assert result.exception is None or isinstance(result.exception, SystemExit), result.exception
+    assert result.exit_code in (0, 1)
     # the unsuppressed control is reported, the suppressed one is not
     assert "control.py:1" in result.output
     assert "app.py:1" not in result.output
