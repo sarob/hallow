@@ -186,14 +186,44 @@ def test_taint_skips_test_files():
         tmp.cleanup()
 
 
-def test_value_spelling_the_key_is_not_a_secret():
-    # Regression: `HARDCODED_SECRET = "hardcoded-secret"` (an enum member) was an error.
+def test_enum_member_spelling_its_name_is_not_a_secret():
+    # Regression: `HARDCODED_SECRET = "hardcoded-secret"` (a StrEnum member) was an error.
     source = (
-        'class RuleId:\n    HARDCODED_SECRET = "hardcoded-secret"\n    API_KEY = "api_key_value"\n'
+        "from enum import StrEnum\n"
+        "class RuleId(StrEnum):\n"
+        '    HARDCODED_SECRET = "hardcoded-secret"\n'
+        '    API_KEY = "api_key_value"\n'
     )
     modules, root, tmp = _modules_from_source(source)
     try:
         findings = detect_hardcoded_secrets(modules, root, _config())
-        assert [f.location.line for f in findings] == [3]
+        assert [f.location.line for f in findings] == [4]
+    finally:
+        tmp.cleanup()
+
+
+def test_password_equal_to_its_name_outside_an_enum_is_reported():
+    # Review of #12: name equality alone does not make a value a label.
+    source = 'password = "password"\nclass Cfg:\n    PASSWORD = "P@a$s$s!w-o_r.d"\n'
+    modules, root, tmp = _modules_from_source(source)
+    try:
+        findings = detect_hardcoded_secrets(modules, root, _config())
+        assert [f.location.line for f in findings] == [1, 3]
+    finally:
+        tmp.cleanup()
+
+
+def test_skipped_label_does_not_hide_a_secret_on_the_same_line():
+    # Review of #12: the exempt first match must not end the search.
+    source = (
+        "import enum\n"
+        "class K(enum.Enum):\n"
+        '    HARDCODED_SECRET = "hardcoded-secret"; password = "sensitive123!"\n'
+    )
+    modules, root, tmp = _modules_from_source(source)
+    try:
+        findings = detect_hardcoded_secrets(modules, root, _config())
+        assert len(findings) == 1
+        assert findings[0].location.col == source.splitlines()[2].index("password")
     finally:
         tmp.cleanup()
