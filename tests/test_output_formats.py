@@ -34,6 +34,15 @@ def _sample_results() -> AnalysisResults:
                 message="'process' has cyclomatic complexity 25 (max 20)",
                 location=Location(file="core.py", line=10),
             ),
+            # analysis emits a finding for every cycle; formatters must not
+            # report the cycle a second time from `cycles`
+            Finding(
+                rule=RuleId.CIRCULAR_DEPENDENCIES,
+                severity=Severity.ERROR,
+                message="Circular import: a.py → b.py → a.py",
+                location=Location(file="a.py", line=1),
+                symbol="a.py|b.py",
+            ),
         ],
         cycles=[
             ImportCycle(modules=["a.py", "b.py"], edges=[("a.py", "b.py"), ("b.py", "a.py")]),
@@ -57,7 +66,7 @@ def test_sarif_structure():
     assert len(sarif["runs"]) == 1
     run = sarif["runs"][0]
     assert run["tool"]["driver"]["name"] == "hallow"
-    assert len(run["results"]) == 3  # 2 findings + 1 cycle
+    assert len(run["results"]) == 3  # one per finding; the cycle is not repeated
 
 
 def test_sarif_empty():

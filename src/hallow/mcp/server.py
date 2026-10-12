@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import sys
+from pathlib import Path
 from typing import Any
 
 from hallow import __version__
@@ -207,9 +208,15 @@ def _dispatch_tool(name: str, args: dict) -> Any:
 
     if name == "analyze":
         fmt = args.get("format", "json")
-        results = detect_dead_code(root=root)
+        from hallow.config import load_config
+
+        cfg = load_config(root=Path(root) if root else None)
+        results = detect_dead_code(config=cfg)
         if fmt == "json":
-            return results.model_dump(mode="json")
+            from hallow.output.envelope import RunContext, check_output
+
+            ctx = RunContext(root=str(cfg.root.resolve()))
+            return check_output(results, "check", 0, ctx=ctx).model_dump(mode="json")
         from hallow.output import format_results
 
         return format_results(results, fmt=fmt)

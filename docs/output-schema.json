@@ -1,0 +1,992 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "hallow output",
+  "description": "Documents hallow writes with --format json, discriminated by `kind`.",
+  "oneOf": [
+    {
+      "$ref": "#/$defs/CheckOutput"
+    },
+    {
+      "$ref": "#/$defs/HealthOutput"
+    },
+    {
+      "$ref": "#/$defs/DupesOutput"
+    },
+    {
+      "$ref": "#/$defs/PruneOutput"
+    },
+    {
+      "$ref": "#/$defs/ErrorOutput"
+    }
+  ],
+  "$defs": {
+    "Action": {
+      "description": "Something that resolves a finding. `type` is the discriminator.",
+      "properties": {
+        "type": {
+          "title": "Type",
+          "type": "string"
+        },
+        "auto_fixable": {
+          "title": "Auto Fixable",
+          "type": "boolean"
+        },
+        "description": {
+          "title": "Description",
+          "type": "string"
+        },
+        "comment": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Comment"
+        },
+        "config_key": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Config Key"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Value"
+        }
+      },
+      "required": [
+        "type",
+        "auto_fixable",
+        "description"
+      ],
+      "title": "Action",
+      "type": "object"
+    },
+    "BaselineStaleness": {
+      "description": "How a loaded baseline matched this run (after fallow's `baseline_staleness`).",
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "baseline_entries": {
+          "default": 0,
+          "title": "Baseline Entries",
+          "type": "integer"
+        },
+        "matched_entries": {
+          "default": 0,
+          "title": "Matched Entries",
+          "type": "integer"
+        },
+        "stale_entries": {
+          "default": 0,
+          "title": "Stale Entries",
+          "type": "integer"
+        },
+        "current_findings": {
+          "default": 0,
+          "title": "Current Findings",
+          "type": "integer"
+        },
+        "stale": {
+          "default": false,
+          "title": "Stale",
+          "type": "boolean"
+        },
+        "warning": {
+          "default": "none",
+          "title": "Warning",
+          "type": "string"
+        },
+        "unrecognised_format": {
+          "default": false,
+          "title": "Unrecognised Format",
+          "type": "boolean"
+        },
+        "saved_by": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Saved By"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "BaselineStaleness",
+      "type": "object"
+    },
+    "CheckOutput": {
+      "properties": {
+        "kind": {
+          "enum": [
+            "check",
+            "security"
+          ],
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingOutput"
+          },
+          "title": "Findings",
+          "type": "array"
+        },
+        "cycles": {
+          "items": {
+            "$ref": "#/$defs/ImportCycle"
+          },
+          "title": "Cycles",
+          "type": "array"
+        },
+        "duplicates": {
+          "items": {
+            "$ref": "#/$defs/DuplicateGroup"
+          },
+          "title": "Duplicates",
+          "type": "array"
+        },
+        "health": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "baseline_staleness": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/BaselineStaleness"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "kind",
+        "summary",
+        "findings"
+      ],
+      "title": "CheckOutput",
+      "type": "object"
+    },
+    "DupesOutput": {
+      "properties": {
+        "kind": {
+          "const": "dupes",
+          "default": "dupes",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
+        "mode": {
+          "title": "Mode",
+          "type": "string"
+        },
+        "clone_groups": {
+          "items": {
+            "$ref": "#/$defs/DuplicateGroup"
+          },
+          "title": "Clone Groups",
+          "type": "array"
+        },
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/FindingOutput"
+          },
+          "title": "Findings",
+          "type": "array"
+        }
+      },
+      "required": [
+        "mode",
+        "clone_groups",
+        "findings"
+      ],
+      "title": "DupesOutput",
+      "type": "object"
+    },
+    "DuplicateFragment": {
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "start_line": {
+          "title": "Start Line",
+          "type": "integer"
+        },
+        "end_line": {
+          "title": "End Line",
+          "type": "integer"
+        },
+        "lines_of_code": {
+          "default": 0,
+          "title": "Lines Of Code",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "file",
+        "start_line",
+        "end_line"
+      ],
+      "title": "DuplicateFragment",
+      "type": "object"
+    },
+    "DuplicateGroup": {
+      "properties": {
+        "fragments": {
+          "items": {
+            "$ref": "#/$defs/DuplicateFragment"
+          },
+          "title": "Fragments",
+          "type": "array"
+        },
+        "token_count": {
+          "default": 0,
+          "title": "Token Count",
+          "type": "integer"
+        },
+        "line_count": {
+          "default": 0,
+          "title": "Line Count",
+          "type": "integer"
+        },
+        "content_digest": {
+          "default": "",
+          "title": "Content Digest",
+          "type": "string"
+        }
+      },
+      "required": [
+        "fragments"
+      ],
+      "title": "DuplicateGroup",
+      "type": "object"
+    },
+    "ErrorOutput": {
+      "description": "Printed on stdout instead of a document when a `--format json` run fails.",
+      "properties": {
+        "error": {
+          "const": true,
+          "default": true,
+          "title": "Error",
+          "type": "boolean"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "exit_code": {
+          "title": "Exit Code",
+          "type": "integer"
+        },
+        "code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Code"
+        },
+        "help": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Help"
+        }
+      },
+      "required": [
+        "message",
+        "exit_code"
+      ],
+      "title": "ErrorOutput",
+      "type": "object"
+    },
+    "FileHealth": {
+      "properties": {
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "cyclomatic_avg": {
+          "default": 0.0,
+          "title": "Cyclomatic Avg",
+          "type": "number"
+        },
+        "cyclomatic_max": {
+          "default": 0,
+          "title": "Cyclomatic Max",
+          "type": "integer"
+        },
+        "cognitive_avg": {
+          "default": 0.0,
+          "title": "Cognitive Avg",
+          "type": "number"
+        },
+        "cognitive_max": {
+          "default": 0,
+          "title": "Cognitive Max",
+          "type": "integer"
+        },
+        "maintainability_index": {
+          "default": 100.0,
+          "title": "Maintainability Index",
+          "type": "number"
+        },
+        "lines_of_code": {
+          "default": 0,
+          "title": "Lines Of Code",
+          "type": "integer"
+        },
+        "hotspot_functions": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Hotspot Functions",
+          "type": "array"
+        }
+      },
+      "required": [
+        "path"
+      ],
+      "title": "FileHealth",
+      "type": "object"
+    },
+    "FindingOutput": {
+      "properties": {
+        "finding_id": {
+          "title": "Finding Id",
+          "type": "string"
+        },
+        "rule": {
+          "$ref": "#/$defs/RuleId"
+        },
+        "severity": {
+          "$ref": "#/$defs/Severity"
+        },
+        "message": {
+          "title": "Message",
+          "type": "string"
+        },
+        "location": {
+          "$ref": "#/$defs/Location"
+        },
+        "symbol": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Symbol"
+        },
+        "suggestion": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Suggestion"
+        },
+        "actions": {
+          "items": {
+            "$ref": "#/$defs/Action"
+          },
+          "title": "Actions",
+          "type": "array"
+        },
+        "metadata": {
+          "additionalProperties": true,
+          "title": "Metadata",
+          "type": "object"
+        }
+      },
+      "required": [
+        "finding_id",
+        "rule",
+        "severity",
+        "message",
+        "location"
+      ],
+      "title": "FindingOutput",
+      "type": "object"
+    },
+    "GateOutcome": {
+      "description": "A gate fails the run only when `status` is \"fail\" and `enforced` is true.",
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "warn",
+            "fail",
+            "skipped"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "enforced": {
+          "title": "Enforced",
+          "type": "boolean"
+        },
+        "observed": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Observed"
+        },
+        "threshold": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Threshold"
+        }
+      },
+      "required": [
+        "status",
+        "enforced"
+      ],
+      "title": "GateOutcome",
+      "type": "object"
+    },
+    "HealthOutput": {
+      "properties": {
+        "kind": {
+          "const": "health",
+          "default": "health",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
+        "project": {
+          "$ref": "#/$defs/ProjectHealth"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/FileHealth"
+          },
+          "title": "Files",
+          "type": "array"
+        }
+      },
+      "required": [
+        "project",
+        "files"
+      ],
+      "title": "HealthOutput",
+      "type": "object"
+    },
+    "ImportCycle": {
+      "properties": {
+        "modules": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Modules",
+          "type": "array"
+        },
+        "edges": {
+          "items": {
+            "maxItems": 2,
+            "minItems": 2,
+            "prefixItems": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "string"
+              }
+            ],
+            "type": "array"
+          },
+          "title": "Edges",
+          "type": "array"
+        }
+      },
+      "required": [
+        "modules"
+      ],
+      "title": "ImportCycle",
+      "type": "object"
+    },
+    "Location": {
+      "properties": {
+        "file": {
+          "title": "File",
+          "type": "string"
+        },
+        "line": {
+          "default": 0,
+          "title": "Line",
+          "type": "integer"
+        },
+        "col": {
+          "default": 0,
+          "title": "Col",
+          "type": "integer"
+        },
+        "end_line": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Line"
+        },
+        "end_col": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "End Col"
+        }
+      },
+      "required": [
+        "file"
+      ],
+      "title": "Location",
+      "type": "object"
+    },
+    "NextStep": {
+      "properties": {
+        "id": {
+          "title": "Id",
+          "type": "string"
+        },
+        "command": {
+          "title": "Command",
+          "type": "string"
+        },
+        "reason": {
+          "title": "Reason",
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "command",
+        "reason"
+      ],
+      "title": "NextStep",
+      "type": "object"
+    },
+    "ProjectHealth": {
+      "properties": {
+        "score": {
+          "default": 100,
+          "title": "Score",
+          "type": "integer"
+        },
+        "grade": {
+          "default": "A",
+          "title": "Grade",
+          "type": "string"
+        },
+        "total_files": {
+          "default": 0,
+          "title": "Total Files",
+          "type": "integer"
+        },
+        "total_functions": {
+          "default": 0,
+          "title": "Total Functions",
+          "type": "integer"
+        },
+        "total_lines": {
+          "default": 0,
+          "title": "Total Lines",
+          "type": "integer"
+        },
+        "cyclomatic_avg": {
+          "default": 0.0,
+          "title": "Cyclomatic Avg",
+          "type": "number"
+        },
+        "cognitive_avg": {
+          "default": 0.0,
+          "title": "Cognitive Avg",
+          "type": "number"
+        },
+        "maintainability_avg": {
+          "default": 0.0,
+          "title": "Maintainability Avg",
+          "type": "number"
+        },
+        "hotspots": {
+          "items": {
+            "$ref": "#/$defs/FileHealth"
+          },
+          "title": "Hotspots",
+          "type": "array"
+        }
+      },
+      "title": "ProjectHealth",
+      "type": "object"
+    },
+    "PruneFile": {
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "pruned",
+            "would-prune",
+            "unchanged",
+            "refused",
+            "error"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "entries_before": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entries Before"
+        },
+        "entries_after": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Entries After"
+        },
+        "removed": {
+          "items": {
+            "$ref": "#/$defs/PruneRemoved"
+          },
+          "title": "Removed",
+          "type": "array"
+        },
+        "reason": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Reason"
+        }
+      },
+      "required": [
+        "kind",
+        "path",
+        "status"
+      ],
+      "title": "PruneFile",
+      "type": "object"
+    },
+    "PruneOutput": {
+      "properties": {
+        "kind": {
+          "const": "baselines-prune",
+          "default": "baselines-prune",
+          "title": "Kind",
+          "type": "string"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "version": {
+          "default": "0.1.0",
+          "title": "Version",
+          "type": "string"
+        },
+        "elapsed_ms": {
+          "default": 0,
+          "title": "Elapsed Ms",
+          "type": "integer"
+        },
+        "gate_outcomes": {
+          "additionalProperties": {
+            "$ref": "#/$defs/GateOutcome"
+          },
+          "title": "Gate Outcomes",
+          "type": "object"
+        },
+        "next_steps": {
+          "items": {
+            "$ref": "#/$defs/NextStep"
+          },
+          "title": "Next Steps",
+          "type": "array"
+        },
+        "check": {
+          "title": "Check",
+          "type": "boolean"
+        },
+        "files": {
+          "items": {
+            "$ref": "#/$defs/PruneFile"
+          },
+          "title": "Files",
+          "type": "array"
+        }
+      },
+      "required": [
+        "check",
+        "files"
+      ],
+      "title": "PruneOutput",
+      "type": "object"
+    },
+    "PruneRemoved": {
+      "properties": {
+        "key": {
+          "title": "Key",
+          "type": "string"
+        },
+        "count": {
+          "title": "Count",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "key",
+        "count"
+      ],
+      "title": "PruneRemoved",
+      "type": "object"
+    },
+    "RuleId": {
+      "enum": [
+        "unused-files",
+        "unused-imports",
+        "unused-functions",
+        "unused-classes",
+        "unused-variables",
+        "unused-dependencies",
+        "unlisted-dependencies",
+        "unused-all-entries",
+        "circular-dependencies",
+        "duplicate-code",
+        "high-complexity",
+        "boundary-violation",
+        "hardcoded-secret",
+        "taint-sink",
+        "stale-suppression"
+      ],
+      "title": "RuleId",
+      "type": "string"
+    },
+    "Severity": {
+      "enum": [
+        "error",
+        "warn",
+        "off"
+      ],
+      "title": "Severity",
+      "type": "string"
+    },
+    "Summary": {
+      "properties": {
+        "total_files_scanned": {
+          "title": "Total Files Scanned",
+          "type": "integer"
+        },
+        "total_issues": {
+          "title": "Total Issues",
+          "type": "integer"
+        },
+        "errors": {
+          "title": "Errors",
+          "type": "integer"
+        },
+        "warnings": {
+          "title": "Warnings",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "total_files_scanned",
+        "total_issues",
+        "errors",
+        "warnings"
+      ],
+      "title": "Summary",
+      "type": "object"
+    }
+  }
+}

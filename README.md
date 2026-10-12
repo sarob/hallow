@@ -168,7 +168,7 @@ The source is organised as these modules and packages, one per pipeline stage or
 **CI integration**
 - This repository's own CI (`.github/workflows/ci.yml`): pytest on Python 3.11–3.14 with an 80% line-coverage floor, ruff, and `hallow check` on its own source
 - Pre-commit hook configuration
-- `--ci` exit code gating
+- Exit-code gating: exit 1 on error-severity findings; `--ci` = SARIF + `--fail-on-issues` + `--quiet`
 - PR-scoped audit with `hallow audit --changed-since`
 - Baseline files (`--save-baseline` / `--baseline`) for regression prevention
 
@@ -244,6 +244,28 @@ hallow baselines prune --baseline hallow-baseline.json [--check]
 ```
 
 A baseline stores one entry per occurrence, so N saved entries hide at most N current findings. The JSON output's `baseline_staleness` reports how many entries matched; when a quarter or more match nothing, a warning goes to stderr. `baselines prune` removes entries that no current finding matches and never adds any (`--check` changes nothing and exits 1 if there is something to prune). A file that is not a hallow `check` baseline — including the line-keyed format earlier versions wrote — suppresses nothing and is reported as unrecognised; re-save it.
+
+## Exit codes and JSON output
+
+| Exit code | Meaning |
+|---|---|
+| 0 | No enforced gate failed: no error-severity findings |
+| 1 | An enforced gate failed: error-severity findings (warn-severity too with `--fail-on-issues`), or a stale baseline with `--fail-on-stale-baseline` |
+| 2 | Invalid input or runtime error: bad flag value, unreadable config, unknown format |
+| 3 | A requested resource is unavailable: the `--config` file does not exist |
+
+`check`, `security` and bare `hallow` exit 1 on error-severity findings without any flag. `--ci` is `--format sarif --fail-on-issues --quiet`; an explicit `--format` wins. `--quiet` silences status messages on stderr, never the output. Treat 0 and 1 as completed runs; do not hide 2 or 3 with `|| true`.
+
+Scripts and agents should use `--format json`. Each command writes one document with:
+
+- `kind` (`check`, `security`, `health`, `dupes`, `baselines-prune`), `schema_version`, `version`, `elapsed_ms`
+- `gate_outcomes` — each gate's `status` (`pass`/`warn`/`fail`/`skipped`) and whether it is `enforced`; the run exits 1 when an enforced gate fails
+- `next_steps[]` — `{id, command, reason}`, read-only commands, shell-quoted and carrying the run's `--root`/`--config`, that run as written from any directory
+- per finding: `finding_id`, `rule`, `severity`, `location`, `symbol` and `actions[]` (`{type, auto_fixable, description, ...}`; `auto_fixable` says whether `hallow fix` applies it)
+
+An error raised while a command runs (unreadable config, unwritable `--output`, unknown `--format`, a refused baseline) is, under `--format json`, a document on stdout rather than a traceback: `{"error": true, "message": "...", "exit_code": 2, "code": "..."}`. Command-line usage errors caught by the argument parser (an unknown option, an invalid `--boundaries` value, options placed before the command) exit 2 with a text message on stderr.
+
+`hallow schema` prints every command, flag, output format, exit code and rule as JSON. `hallow schema --output-schema` prints the JSON Schema of every document, committed as [`docs/output-schema.json`](docs/output-schema.json).
 
 ## Python-Specific Design
 

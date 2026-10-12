@@ -15,23 +15,6 @@ def format_codeclimate(results: AnalysisResults, file: Any = None) -> str:
     for finding in results.findings:
         issues.append(_finding_to_issue(finding))
 
-    for cycle in results.cycles:
-        chain = " -> ".join(cycle.modules + [cycle.modules[0]])
-        issues.append(
-            {
-                "type": "issue",
-                "check_name": "circular-dependencies",
-                "description": f"Circular import: {chain}",
-                "severity": "critical",
-                "fingerprint": _fingerprint(f"circular:{chain}"),
-                "location": {
-                    "path": cycle.modules[0],
-                    "lines": {"begin": 1},
-                },
-                "categories": ["Complexity"],
-            }
-        )
-
     text = json.dumps(issues, indent=2)
     if file:
         file.write(text)
