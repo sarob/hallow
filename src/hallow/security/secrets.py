@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -84,35 +85,66 @@ def detect_hardcoded_secrets(
         except OSError:
             continue
 
+        enum_lines = _enum_member_lines(source)
         for line_num, line in enumerate(source.splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#") or not stripped:
                 continue
 
-            for label, pattern in _SECRET_PATTERNS:
-                match = pattern.search(line)
-                if not match or _is_safe_context(line, match.group()):
-                    continue
-                key = _assigned_key(line, match)
-                if _value_names_key(match, key):
-                    continue
-                findings.append(
-                    Finding(
-                        rule=RuleId.HARDCODED_SECRET,
-                        severity=severity,
-                        message=f"Potential {label} detected",
-                        location=Location(
-                            file=path,
-                            line=line_num,
-                            col=match.start(),
-                        ),
-                        suggestion="Move secrets to environment variables or a secrets manager",
-                        metadata={"kind": label},
-                    )
+            hit = _first_secret(line, in_enum=line_num in enum_lines)
+            if hit is None:
+                continue
+            label, match = hit
+            findings.append(
+                Finding(
+                    rule=RuleId.HARDCODED_SECRET,
+                    severity=severity,
+                    message=f"Potential {label} detected",
+                    location=Location(file=path, line=line_num, col=match.start()),
+                    suggestion="Move secrets to environment variables or a secrets manager",
+                    metadata={"kind": label},
                 )
-                break
+            )
 
     return findings
+
+
+def _first_secret(line: str, in_enum: bool) -> tuple[str, re.Match[str]] | None:
+    """The first reportable match on a line (one finding per line).
+
+    Every match of every pattern is considered, so a skipped enum label does
+    not hide a real secret later on the same line.
+    """
+    for label, pattern in _SECRET_PATTERNS:
+        for match in pattern.finditer(line):
+            if _is_safe_context(line, match.group()):
+                break
+            if in_enum and _value_names_key(match, _assigned_key(line, match)):
+                continue
+            return label, match
+    return None
+
+
+_ENUM_BASES = ("Enum", "Flag")
+
+
+def _enum_member_lines(source: str) -> set[int]:
+    """Lines holding a member assignment in the body of an Enum/Flag subclass."""
+    try:
+        tree = ast.parse(source)
+    except SyntaxError:
+        return set()
+    lines: set[int] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = [b.id if isinstance(b, ast.Name) else getattr(b, "attr", "") for b in node.bases]
+        if not any(name.endswith(_ENUM_BASES) for name in bases):
+            continue
+        for stmt in node.body:
+            if isinstance(stmt, ast.Assign | ast.AnnAssign):
+                lines.update(range(stmt.lineno, (stmt.end_lineno or stmt.lineno) + 1))
+    return lines
 
 
 def _assigned_key(line: str, match: re.Match[str]) -> str:
@@ -126,8 +158,9 @@ def _assigned_key(line: str, match: re.Match[str]) -> str:
 def _value_names_key(match: re.Match[str], key: str) -> bool:
     """True when the value only spells out the key's own name.
 
-    `HARDCODED_SECRET = "hardcoded-secret"` (an enum or constant naming the
-    concept) is a label, not a credential.
+    Applied only to Enum/Flag members, where `HARDCODED_SECRET =
+    "hardcoded-secret"` is a label. Anywhere else, a password whose value
+    equals its own name is still a credential and stays reported.
     """
     value = match.groupdict().get("value")
     if not value or not key:
