@@ -179,8 +179,7 @@ def test_fix_dry_run_then_apply(project: Path):
     assert applied.exit_code == 0 and "Did" in applied.output
     assert "import os" not in service.read_text()
     assert not (project / "island" / "a.py").exists()
-    # Removing "leftpad" from pyproject.toml is asserted in #17: on main the
-    # fixer reads `"leftpad",` as `leftpad"` and never matches it.
+    assert "leftpad" not in (project / "pyproject.toml").read_text()
 
     again = runner.invoke(app_cli(), ["fix", "--root", str(project)])
     assert "Nothing to fix" in again.output or "Would" in again.output
