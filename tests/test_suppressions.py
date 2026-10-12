@@ -86,3 +86,89 @@ def test_suppression_for_other_rule_does_not_hide_and_is_stale():
 def test_unknown_rule_is_reported_stale():
     found = _analyze({"main.py": "x = 1  # hallow-ignore no-such-rule\nprint(x)\n"})
     assert ("stale-suppression", "main.py", 1) in found
+
+
+def test_file_suppression_hides_every_finding_of_its_rules():
+    found = _analyze(
+        {
+            "main.py": "import helper\nhelper.run()\n",
+            "helper.py": """\
+            # hallow-ignore-file unused-imports
+            import json
+            import re
+            def run(): ...
+        """,
+        }
+    )
+    assert not [f for f in found if f[1] == "helper.py"]
+
+
+def test_suppression_naming_only_disabled_rules_is_inert(tmp_path):
+    (tmp_path / "main.py").write_text("x = 1  # hallow-ignore taint-sink\nprint(x)\n")
+    # taint-sink is off by default
+    results = analyze(HallowConfig(root=tmp_path))
+    assert not [f for f in results.findings if f.rule.value == "stale-suppression"]
+
+
+def test_unknown_rule_next_to_a_valid_one_is_still_reported():
+    # Review of #15: the valid rule hid the typo.
+    found = _analyze(
+        {
+            "main.py": "import helper\nhelper.run()\n",
+            "helper.py": """\
+            import json  # hallow-ignore unused-imports, no-such-rule
+            def run(): ...
+        """,
+        }
+    )
+    assert ("unused-imports", "helper.py", 1) not in found
+    assert ("stale-suppression", "helper.py", 1) in found
+
+
+def test_stale_findings_are_suppressible_by_another_suppression():
+    # Review of #15: stale-suppression findings could not be suppressed.
+    found = _analyze(
+        {
+            "main.py": """\
+            # hallow-ignore-file stale-suppression
+            x = 1  # hallow-ignore no-such-rule
+            print(x)
+        """,
+        }
+    )
+    assert not [f for f in found if f[0] == "stale-suppression"]
+
+
+def test_a_suppression_cannot_hide_its_own_staleness():
+    found = _analyze({"main.py": "# hallow-ignore-file\nprint(1)\n"})
+    assert ("stale-suppression", "main.py", 1) in found
+
+
+def test_security_command_honours_suppressions(tmp_path):
+    from typer.testing import CliRunner
+
+    from hallow.cli.main import app
+
+    (tmp_path / "app.py").write_text(
+        'TOKEN = "ghp_' + "a" * 36 + '"  # hallow-ignore hardcoded-secret -- test fixture\n'
+    )
+    result = CliRunner().invoke(app, ["security", "--root", str(tmp_path), "-f", "compact"])
+    assert "hardcoded-secret" not in result.output
+
+
+def test_suppressed_cycle_and_clone_are_not_counted(tmp_path):
+    # Review of #15 (with #20): suppressing a cycle's or clone group's finding
+    # must remove it from total_issues; results.cycles/duplicates stay as data.
+    block = "\n".join(f"    v{i} = compute({i}) + offset_{i}" for i in range(20))
+    (tmp_path / "a.py").write_text(
+        "# hallow-ignore-file circular-dependencies, duplicate-code\n"
+        f"import b\ndef fa():\n{block}\n"
+    )
+    (tmp_path / "b.py").write_text(f"import a\ndef fb():\n{block}\n")
+    cfg = HallowConfig(root=tmp_path)
+    cfg.duplicates.min_tokens = 30
+    results = analyze(cfg)
+    rules = {f.rule.value for f in results.findings}
+    assert results.cycles and results.duplicates
+    assert not {"circular-dependencies", "duplicate-code"} & rules
+    assert results.total_issues == len(results.findings) == results.errors + results.warnings

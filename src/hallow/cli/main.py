@@ -213,6 +213,22 @@ def main(
 ) -> None:
     """Run the full analysis (same as `hallow check`) when no command is given."""
     if ctx.invoked_subcommand is not None:
+        # Options given before a command belong to the bare `hallow` run and
+        # would be silently dropped; refuse instead (`hallow --boundaries
+        # layered check` used to run check without boundaries).
+        given = [
+            p.opts[0]
+            for p in ctx.command.params
+            if p.name not in ("version",)
+            and ctx.get_parameter_source(p.name) is not None
+            and ctx.get_parameter_source(p.name).name == "COMMANDLINE"
+        ]
+        if given:
+            raise typer.BadParameter(
+                f"{', '.join(given)} given before '{ctx.invoked_subcommand}'; "
+                f"put options after the command: hallow {ctx.invoked_subcommand} {given[0]} ...",
+                param_hint="options",
+            )
         return
     _run_check(
         root, config, format, output_file, ci, fail_on_issues, quiet, changed_since,
