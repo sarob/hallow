@@ -316,8 +316,8 @@ def test_parameter_shadowing_an_enum_import_is_not_trusted():
     # both would be exempt labels if the aliases were trusted: the parameter
     # shadows `Base` (line 4), the lambda parameter shadows `e` (line 9)
     assert _lines_found(source) == [4, 9]
-    # control: without the lambda, `e.Enum` is trusted and line 4 of this
-    # source is an exempt label
+    # control: without the lambda, `e.Enum` is trusted and the PASSWORD on
+    # line 3 of this source is an exempt label
     trusted = 'import enum as e\nclass More(e.Enum):\n    PASSWORD = "password"\n'
     assert _lines_found(trusted) == []
 
