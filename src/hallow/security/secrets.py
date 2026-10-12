@@ -158,6 +158,24 @@ def _enum_label_positions(source: str) -> set[tuple[int, int]]:
                 if alias.name == "enum":
                     enum_modules.add(alias.asname or "enum")
 
+    # A name trusted as an enum base must be bound exactly once in the file
+    # (by its import or class statement). Any other binding anywhere —
+    # `Base = object`, a def, another import — and the name is not trusted;
+    # the label is then reported, the safe direction.
+    bindings: dict[str, int] = {}
+    for node in ast.walk(tree):
+        names: list[str] = []
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names = [node.id]
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names = [node.name]
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            names = [(a.asname or a.name).split(".")[0] for a in node.names]
+        for name in names:
+            bindings[name] = bindings.get(name, 0) + 1
+    enum_names = {n for n in enum_names if bindings.get(n, 0) == 1}
+    enum_modules = {n for n in enum_modules if bindings.get(n, 0) == 1}
+
     def is_enum_base(base: ast.expr) -> bool:
         if isinstance(base, ast.Name):
             return base.id in enum_names
@@ -176,7 +194,8 @@ def _enum_label_positions(source: str) -> set[tuple[int, int]]:
         for cls in classes:
             if cls not in enum_classes and any(is_enum_base(b) for b in cls.bases):
                 enum_classes.append(cls)
-                enum_names.add(cls.name)
+                if bindings.get(cls.name, 0) == 1:
+                    enum_names.add(cls.name)
                 changed = True
 
     positions: set[tuple[int, int]] = set()
