@@ -17,8 +17,11 @@ EXIT_CODES: dict[int, str] = {
     ISSUES: "An enforced gate failed: error-severity findings (or any finding with "
     "--fail-on-issues), a stale baseline with --fail-on-stale-baseline, an audit "
     "fail verdict, or `baselines prune --check` found entries to prune",
-    INVALID_INPUT: "Invalid input or runtime error: bad flag value, unreadable config, "
-    "unknown format, git failure. With --format json the error is a JSON document on stdout",
+    INVALID_INPUT: "Invalid input or runtime error: unreadable config, unknown format, "
+    "refused baseline, git failure. With --format json, an error raised while the command "
+    "runs is a JSON document on stdout. Command-line usage errors caught by the argument "
+    "parser (unknown option, invalid --boundaries, options before the command) are text "
+    "on stderr",
     UNAVAILABLE: "A requested resource is unavailable: the --config file does not exist",
 }
 
