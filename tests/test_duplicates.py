@@ -182,26 +182,34 @@ def _tokens(src: str, mode: str) -> list[str]:
 
 
 def test_fstring_text_blinding_by_mode():
-    src = 'x = f"a{b}c"\n'
+    src = 'x = f"a{b + 1}c"\n'
     if sys.version_info >= (3, 12):
         # 3.12+ tokenizes f-strings piecewise: literal text is FSTRING_MIDDLE,
-        # the interpolation keeps its own tokens.
-        assert _tokens(src, "strict") == ["x", "=", 'f"', "a", "{", "b", "}", "c", '"']
-        assert _tokens(src, "mild") == _tokens(src, "strict")
-        assert _tokens(src, "weak") == ["x", "=", 'f"', "$STR", "{", "b", "}", "$STR", '"']
+        # the interpolation keeps its own tokens, operators included.
+        strict = ["x", "=", 'f"', "a", "{", "b", "+", "1", "}", "c", '"']
+        assert _tokens(src, "strict") == strict
+        assert _tokens(src, "mild") == strict
+        assert _tokens(src, "weak") == [
+            "x", "=", 'f"', "$STR", "{", "b", "+", "1", "}", "$STR", '"',
+        ]  # fmt: skip
         assert _tokens(src, "semantic") == [
-            "$ID", "=", 'f"', "$STR", "{", "$ID", "}", "$STR", '"',
+            "$ID", "=", 'f"', "$STR", "{", "$ID", "+", "$NUM", "}", "$STR", '"',
         ]  # fmt: skip
     else:
-        # 3.11 tokenizes the whole f-string as one STRING token.
-        assert _tokens(src, "strict") == ["x", "=", 'f"a{b}c"']
+        # 3.11 tokenizes the whole f-string, interpolation included, as one STRING.
+        assert _tokens(src, "strict") == ["x", "=", 'f"a{b + 1}c"']
+        assert _tokens(src, "mild") == ["x", "=", 'f"a{b + 1}c"']
         assert _tokens(src, "weak") == ["x", "=", "$STR"]
         assert _tokens(src, "semantic") == ["$ID", "=", "$STR"]
 
 
 @pytest.mark.skipif(sys.version_info < (3, 14), reason="t-strings are Python 3.14+")
 def test_tstring_text_blinding_by_mode():
-    src = 'y = t"a{b}"\n'
-    assert _tokens(src, "strict") == ["y", "=", 't"', "a", "{", "b", "}", '"']
-    assert _tokens(src, "weak") == ["y", "=", 't"', "$STR", "{", "b", "}", '"']
-    assert _tokens(src, "semantic") == ["$ID", "=", 't"', "$STR", "{", "$ID", "}", '"']
+    src = 'y = t"a{b + 1}"\n'
+    strict = ["y", "=", 't"', "a", "{", "b", "+", "1", "}", '"']
+    assert _tokens(src, "strict") == strict
+    assert _tokens(src, "mild") == strict
+    assert _tokens(src, "weak") == ["y", "=", 't"', "$STR", "{", "b", "+", "1", "}", '"']
+    assert _tokens(src, "semantic") == [
+        "$ID", "=", 't"', "$STR", "{", "$ID", "+", "$NUM", "}", '"',
+    ]  # fmt: skip
