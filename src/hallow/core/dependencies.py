@@ -69,67 +69,37 @@ def read_declared_dependencies(root: Path) -> list[DeclaredDependency]:
 
 
 def _from_pyproject(data: dict, text: str) -> list[DeclaredDependency]:
-    sections = _table_lines(text)
+    from hallow.core.toml_locations import array_string_lines
+
+    located = array_string_lines(text)
     project = data.get("project", {})
     result: list[DeclaredDependency] = []
-    cursor: dict[str, int] = {}
 
-    def add(spec: object, optional: bool, table: str) -> None:
+    def add(spec: object, optional: bool, path: tuple[str, ...]) -> None:
         if not isinstance(spec, str):
             return  # `{include-group = ...}` entries in dependency-groups
         name = requirement_name(spec)
-        if name:
-            result.append(
-                DeclaredDependency(
-                    name=name,
-                    file="pyproject.toml",
-                    line=_line_of(sections.get(table, []), spec, cursor, table),
-                    optional=optional,
-                )
-            )
+        if not name:
+            return
+        # Each parsed entry takes the next located element with the same
+        # decoded value in the same array, so positions follow the array,
+        # never free text elsewhere in the file.
+        entries = located.get(path, [])
+        index = next((i for i, (_, v) in enumerate(entries) if v == spec), None)
+        line = entries.pop(index)[0] if index is not None else 1
+        result.append(
+            DeclaredDependency(name=name, file="pyproject.toml", line=line, optional=optional)
+        )
 
     for spec in project.get("dependencies", []):
-        add(spec, optional=False, table="project")
-    for group in project.get("optional-dependencies", {}).values():
-        for spec in group:
-            add(spec, optional=True, table="project.optional-dependencies")
-    for group in data.get("dependency-groups", {}).values():
-        for spec in group:
-            add(spec, optional=True, table="dependency-groups")
+        add(spec, False, ("project", "dependencies"))
+    for group, specs in project.get("optional-dependencies", {}).items():
+        for spec in specs:
+            add(spec, True, ("project", "optional-dependencies", group))
+    for group, specs in data.get("dependency-groups", {}).items():
+        for spec in specs:
+            add(spec, True, ("dependency-groups", group))
     return result
-
-
-def _table_lines(text: str) -> dict[str, list[tuple[int, str]]]:
-    """Non-comment lines of each TOML table, keyed by table name."""
-    out: dict[str, list[tuple[int, str]]] = {}
-    current = ""
-    for i, line in enumerate(text.splitlines(), 1):
-        stripped = line.strip()
-        if stripped.startswith("#") or not stripped:
-            continue
-        header = re.match(r"^\[\s*([^\[\]]+?)\s*\]\s*(#.*)?$", stripped)
-        if header:
-            current = header.group(1).replace(" ", "")
-            continue
-        out.setdefault(current, []).append((i, line))
-    return out
-
-
-def _line_of(lines: list[tuple[int, str]], spec: str, cursor: dict[str, int], table: str) -> int:
-    """Line of a quoted requirement inside its table, scanning forward.
-
-    Searching only the owning table's non-comment lines, after the previous
-    match, keeps a commented example or the same spec in another table from
-    claiming the location.
-    """
-    start = cursor.get(table, 0)
-    for quote in ('"', "'"):
-        needle = f"{quote}{spec}{quote}"
-        for number, line in lines:
-            if number > start and needle in line.split(" #", 1)[0]:
-                cursor[table] = number
-                return number
-    return 1
 
 
 def _from_requirements(root: Path) -> list[DeclaredDependency]:
