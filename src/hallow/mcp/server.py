@@ -130,6 +130,7 @@ _RULE_EXPLANATIONS = {
         "Flags dangerous function calls (eval, exec, os.system, SQL execute) "
         "with dynamic arguments that may carry user input."
     ),
+    "stale-suppression": "A `# hallow-ignore` comment that no longer suppresses any finding.",
 }
 
 

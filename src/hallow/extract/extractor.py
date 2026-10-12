@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import ast
 import hashlib
+import io
 import re
+import tokenize
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from pathlib import Path
 
-from hallow.types import ExportInfo, FunctionComplexity, ImportInfo, ModuleInfo
+from hallow.types import ExportInfo, FunctionComplexity, ImportInfo, ModuleInfo, Suppression
 
 # ruff/flake8 F401 == "imported but unused"; hallow maps it to `unused-imports`.
 _NOQA_RE = re.compile(r"#\s*noqa(?::\s*(?P<codes>[A-Z0-9, ]+))?", re.IGNORECASE)
@@ -34,6 +36,69 @@ def _collect_noqa_lines(source: str) -> set[int]:
         if codes is None or {c.strip().upper() for c in codes.split(",")} & _UNUSED_IMPORT_CODES:
             lines.add(i)
     return lines
+
+
+# `# hallow-ignore[-next-line|-file] [rule[, rule...]] [-- reason]`
+_SUPPRESSION_RE = re.compile(
+    r"^#\s*hallow-ignore(?P<kind>-next-line|-file)?(?![\w-])\s*(?P<rest>.*)$"
+)
+
+
+def _collect_suppressions(source: str) -> list[Suppression]:
+    """Parse `# hallow-ignore` comments.
+
+    Comments are read from the token stream, so the marker inside a string
+    literal is not a suppression.
+    """
+    if "hallow-ignore" not in source:
+        return []
+
+    comments: list[tuple[int, str]] = []
+    code_lines: set[int] = set()
+    non_code = {
+        tokenize.COMMENT,
+        tokenize.NL,
+        tokenize.NEWLINE,
+        tokenize.INDENT,
+        tokenize.DEDENT,
+        tokenize.ENCODING,
+        tokenize.ENDMARKER,
+    }
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(source).readline):
+            if tok.type == tokenize.COMMENT:
+                comments.append((tok.start[0], tok.string))
+            elif tok.type not in non_code:
+                code_lines.update(range(tok.start[0], tok.end[0] + 1))
+    except (tokenize.TokenError, SyntaxError):
+        return []
+
+    sorted_code = sorted(code_lines)
+    result: list[Suppression] = []
+    for line, text in comments:
+        m = _SUPPRESSION_RE.match(text)
+        if not m:
+            continue
+        rules_part, _, reason = m.group("rest").partition("--")
+        rules = [r for r in re.split(r"[,\s]+", rules_part.strip()) if r]
+        kind_suffix = m.group("kind")
+        if kind_suffix == "-file":
+            kind, target = "file", None
+        elif kind_suffix == "-next-line":
+            kind = "next-line"
+            target = next((n for n in sorted_code if n > line), None)
+        else:
+            kind, target = "line", line
+        result.append(
+            Suppression(
+                kind=kind,
+                line=line,
+                target_line=target,
+                rules=rules,
+                reason=reason.strip() or None,
+            )
+        )
+    return result
 
 
 def _is_type_checking_block(node: ast.AST) -> bool:
@@ -372,6 +437,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
     referenced_names = _collect_referenced_names(tree)
     accessed_attributes = _collect_accessed_attributes(tree)
     noqa_lines = _collect_noqa_lines(source)
+    suppressions = _collect_suppressions(source)
 
     is_init = path.name == "__init__.py"
     is_main = path.name == "__main__.py"
@@ -397,6 +463,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         referenced_names=referenced_names,
         accessed_attributes=accessed_attributes,
         noqa_lines=noqa_lines,
+        suppressions=suppressions,
         docstring=docstring,
         is_init=is_init,
         is_main=is_main,
