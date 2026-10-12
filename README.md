@@ -100,7 +100,7 @@ It uses Python's built-in `ast` module — no external parser — and produces u
 
 ## Architecture
 
-Ten packages, one per pipeline stage or surface:
+The source is organised as these modules and packages, one per pipeline stage or surface:
 
 | Module | Role |
 |--------|------|
@@ -108,9 +108,9 @@ Ten packages, one per pipeline stage or surface:
 | `hallow.config` | Config from `.hallowrc.toml` or `pyproject.toml [tool.hallow]`. Zero-config defaults. |
 | `hallow.extract` | AST extraction via `ast.parse()`. Produces ModuleInfo per file: imports, exports, `__all__`, complexity. |
 | `hallow.graph` | Module graph from ModuleInfo. Import resolution, reachability, cycle detection (Tarjan's SCC). |
-| `hallow.core` | Analysis orchestration. Detectors run in sequence over one module graph: dead code, unused deps, circular imports, duplication, boundaries. |
+| `hallow.core` | Analysis orchestration. One pipeline runs the detectors in sequence: dead code, unused deps, circular imports and boundaries read the module graph; duplication reads the token stream. |
 | `hallow.security` | Hardcoded-secret and taint-sink detectors. |
-| `hallow.plugins` | Framework awareness. Auto-activated from `pyproject.toml` deps: Django, Flask, FastAPI, pytest, Celery. |
+| `hallow.plugins` | Framework awareness. Auto-activated from declared dependencies: Django, Flask, FastAPI, pytest, Celery. |
 | `hallow.output` | Formatters: JSON, SARIF, Markdown, CodeClimate, GitHub annotations, compact, human (Rich ANSI). |
 | `hallow.cli` | Typer CLI: `hallow check`, `health`, `dupes`, `audit`, `fix`, `security`, `mcp`. |
 | `hallow.mcp` | MCP server. 6 tools for agent-driven codebase intelligence. |
@@ -254,7 +254,7 @@ Hallow is not a port of Fallow — it's built for Python's idioms:
 - **No explicit exports** — Python uses `__all__` (optional) and convention (leading underscore). Hallow treats all public module-level names as exports unless `__all__` narrows the surface.
 - **Dynamic features** — `getattr()`, `**kwargs`, metaclasses, decorator registries. Framework plugins handle common patterns; suppression comments handle the rest.
 - **`pyproject.toml` over `package.json`** — dependency parsing from `[project.dependencies]`, `[project.optional-dependencies]`, `requirements.txt` fallback.
-- **Parallelism via `ProcessPoolExecutor`** — Python's GIL makes threading insufficient for CPU-bound AST parsing, so files are parsed in worker processes (50+ files).
+- **Parallelism via `ProcessPoolExecutor`** — Python's GIL makes threading insufficient for CPU-bound AST parsing, so files are parsed in worker processes when there are 50 or more (`extract_modules_parallel`).
 
 ## Stack
 
