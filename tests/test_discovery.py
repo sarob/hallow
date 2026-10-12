@@ -75,3 +75,87 @@ def test_user_ignore_pattern_prunes_directory():
         _touch(root, "app/migrations/0001_initial.py")
         found = _discovered(root, ignore_patterns=["**/migrations/**"])
         assert found == ["app.py"]
+
+
+def test_bracket_classes_have_fnmatch_semantics():
+    # Regression (review of #11): `[]]` crashed re.compile, and `[^a]` was read as
+    # negation, though fnmatch treats `^` as a literal and only `!` negates.
+    import fnmatch
+
+    names = ["a.py", "b.py", "^.py", "].py", "!.py", "-.py", "c.py"]
+    for pattern in ["[]].py", "[^a].py", "[!a].py", "[a-c].py", "[!]].py", "[-a].py", "[.py"]:
+        for name in names:
+            assert matches_glob(name, pattern) == fnmatch.fnmatchcase(name, pattern), (
+                pattern,
+                name,
+            )
+
+
+def test_bracket_pattern_in_config_does_not_abort_discovery():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _touch(root, "].py")
+        _touch(root, "keep.py")
+        assert _discovered(root, ignore_patterns=["[]].py"]) == ["keep.py"]
+
+
+def test_nested_build_dist_venv_discovery():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _touch(root, "pkg/core.py")
+        _touch(root, "pkg/build/lib/core.py")
+        _touch(root, "pkg/dist/x.py")
+        _touch(root, "pkg/venv/lib/site.py")
+        assert _discovered(root) == ["pkg/core.py"]
+
+
+def test_env_markers_must_have_the_right_type():
+    # A source dir with a *file* named conda-meta, or a *directory* named
+    # pyvenv.cfg, is not an environment.
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _touch(root, "tool/a.py")
+        (root / "tool" / "conda-meta").write_text("not a dir\n")
+        _touch(root, "other/b.py")
+        (root / "other" / "pyvenv.cfg").mkdir()
+        assert _discovered(root) == ["other/b.py", "tool/a.py"]
+
+
+def test_root_itself_is_scanned_even_if_it_is_an_environment():
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        (root / "pyvenv.cfg").write_text("home = /usr/bin\n")
+        _touch(root, "lib/x.py")
+        assert _discovered(root) == ["lib/x.py"]
+
+
+def test_ignored_directories_are_pruned_not_walked(monkeypatch):
+    import hallow.core.discovery as discovery
+
+    seen: list[str] = []
+    real = discovery._is_env_dir
+
+    def spy(path: Path) -> bool:
+        seen.append(path.name)
+        return real(path)
+
+    monkeypatch.setattr(discovery, "_is_env_dir", spy)
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _touch(root, "app/main.py")
+        _touch(root, "build/lib/deep/x.py")
+        _discovered(root)
+    # `build` is rejected by the ignore pattern before any env check, and
+    # nothing beneath it is ever visited.
+    assert "app" in seen
+    assert not {"build", "lib", "deep"} & set(seen)
+
+
+def test_slashless_pattern_naming_a_directory_prunes_it():
+    # Documented behaviour change: a pattern without `/` also matches directory
+    # names, so `generated` excludes the whole `generated/` tree.
+    with TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        _touch(root, "generated/app.py")
+        _touch(root, "main.py")
+        assert _discovered(root, ignore_patterns=["generated"]) == ["main.py"]

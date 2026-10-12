@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import re
 from functools import lru_cache
@@ -9,10 +10,37 @@ from pathlib import Path
 
 from hallow.config.loader import HallowConfig
 
-# A directory holding one of these is a Python environment (venv/virtualenv
-# write `pyvenv.cfg`, conda writes `conda-meta/`), whatever the directory is
-# called. Its contents are installed third-party code, never project source.
-_ENV_MARKERS = ("pyvenv.cfg", "conda-meta")
+# A directory holding `pyvenv.cfg` (a file, written by venv/virtualenv) or
+# `conda-meta/` (a directory, written by conda) is a Python environment,
+# whatever it is called. Its contents are installed third-party code.
+_ENV_MARKER_FILE = "pyvenv.cfg"
+_ENV_MARKER_DIR = "conda-meta"
+
+_FNMATCH_WRAPPER = re.compile(r"\(\?s:(.*)\)\\[zZ]", re.DOTALL)
+
+
+def _bracket_end(pattern: str, i: int) -> int:
+    """Index of the `]` closing the class opened at `i`, or -1 (fnmatch's rules).
+
+    A `]` right after `[` or `[!` is a literal member, not the end.
+    """
+    j = i + 1
+    if j < len(pattern) and pattern[j] == "!":
+        j += 1
+    if j < len(pattern) and pattern[j] == "]":
+        j += 1
+    end = pattern.find("]", j)
+    return end
+
+
+def _class_regex(cls: str) -> str:
+    """Regex for one `[...]` class with exactly fnmatch's semantics.
+
+    fnmatch reads `!` as negation and `^` as a literal member; delegating to
+    `fnmatch.translate` keeps that (and its escaping of `\\`, `&&`, `~~`, `||`).
+    """
+    m = _FNMATCH_WRAPPER.fullmatch(fnmatch.translate(cls))
+    return m.group(1) if m else re.escape(cls)
 
 
 @lru_cache(maxsize=256)
@@ -40,15 +68,12 @@ def _glob_to_regex(pattern: str) -> re.Pattern[str]:
             out.append("[^/]")
             i += 1
         elif pattern[i] == "[":
-            end = pattern.find("]", i + 1)
+            end = _bracket_end(pattern, i)
             if end == -1:
                 out.append(re.escape(pattern[i]))
                 i += 1
             else:
-                body = pattern[i + 1 : end]
-                if body.startswith("!"):
-                    body = "^" + body[1:]
-                out.append(f"[{body}]")
+                out.append(_class_regex(pattern[i : end + 1]))
                 i = end + 1
         else:
             out.append(re.escape(pattern[i]))
@@ -74,10 +99,15 @@ def _should_ignore(rel_path: str, patterns: list[str]) -> bool:
 
 
 def _is_env_dir(path: Path) -> bool:
-    return any((path / marker).exists() for marker in _ENV_MARKERS)
+    return (path / _ENV_MARKER_FILE).is_file() or (path / _ENV_MARKER_DIR).is_dir()
 
 
 def discover_python_files(config: HallowConfig) -> list[Path]:
+    """Python files under the root, skipping hidden, ignored and environment directories.
+
+    The root itself is never skipped: pointing `--root` at an environment
+    scans it as asked.
+    """
     root = config.root.resolve()
     patterns = config.ignore_patterns
     files: list[Path] = []
