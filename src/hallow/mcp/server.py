@@ -211,7 +211,7 @@ def _dispatch_tool(name: str, args: dict) -> Any:
         if fmt == "json":
             from hallow.output.envelope import check_output
 
-            return check_output(results, "check", 0, {}).model_dump(mode="json")
+            return check_output(results, "check", 0).model_dump(mode="json")
         from hallow.output import format_results
 
         return format_results(results, fmt=fmt)

@@ -25,6 +25,17 @@ app = typer.Typer(
 
 CHECK_FORMATS = ("human", "json", "compact", "sarif", "markdown", "codeclimate", "github")
 DOC_FORMATS = ("human", "json")
+DUPE_MODES = ("strict", "mild", "weak", "semantic")
+
+# Allowed values of string options that are validated in the command body
+# rather than by the parser; `hallow schema` publishes them per command.
+FLAG_VALUES: dict[tuple[str, str], tuple[str, ...]] = {
+    **{(c, "--format"): CHECK_FORMATS for c in ("", "check", "audit", "security")},
+    **{(c, "--format"): DOC_FORMATS for c in ("health", "dupes", "baselines prune")},
+    ("dupes", "--mode"): DUPE_MODES,
+    ("", "--boundaries"): ("layered", "hexagonal", "feature-sliced"),
+    ("check", "--boundaries"): ("layered", "hexagonal", "feature-sliced"),
+}
 
 
 # ── Shared options ──
@@ -110,8 +121,11 @@ def _version_callback(value: bool) -> None:
 def _guarded(fmt: str | None, body: Callable[[], int]) -> None:
     """Run a command body; map its result and errors to exit codes.
 
-    With `--format json`, an error is a JSON document on stdout
-    (`{"error": true, "message", "exit_code"}`) rather than a traceback.
+    With `--format json`, an error raised while the command runs is a JSON
+    document on stdout (`{"error": true, "message", "exit_code"}`) rather
+    than a traceback. Command-line usage errors (unknown option, invalid
+    `--boundaries` value, options before the command) are reported by the
+    argument parser before this runs: text on stderr, exit 2.
     """
     try:
         code = body()
@@ -121,6 +135,10 @@ def _guarded(fmt: str | None, body: Callable[[], int]) -> None:
         _fail(fmt, HallowError(f"file not found: {e.filename}", UNAVAILABLE, "HALLOW_NOT_FOUND"))
     except tomllib.TOMLDecodeError as e:
         _fail(fmt, HallowError(f"invalid TOML config: {e}", INVALID_INPUT, "HALLOW_INVALID_CONFIG"))
+    except OSError as e:
+        # unwritable --output, a directory where a file is expected, ...
+        where = f": {e.filename}" if e.filename else ""
+        _fail(fmt, HallowError(f"{e.strerror or e}{where}", INVALID_INPUT, "HALLOW_IO_ERROR"))
     except ValidationError as e:
         first = e.errors()[0]
         where = ".".join(str(x) for x in first["loc"])
@@ -304,7 +322,10 @@ def _run_check(
             gates["stale-baseline"] = stale_baseline_gate(
                 results.baseline_staleness, enforced=fail_on_stale_baseline
             )
-        _emit_results(results, out_fmt, output_file, "check", _elapsed_ms(start), gates)
+        _emit_results(
+            results, out_fmt, output_file, "check", _elapsed_ms(start), gates,
+            _context(root, config_path),
+        )  # fmt: skip
         return _exit_for(gates)
 
     _guarded(fmt, body)
@@ -337,12 +358,23 @@ def _apply_baseline(results, baseline_path, save_baseline_path, quiet: bool):
     return results
 
 
-def _emit_results(results, fmt: str, output_file: Path | None, kind, elapsed_ms, gates) -> None:
+def _context(root: Path | None, config: Path | None):
+    from hallow.output.envelope import RunContext
+
+    return RunContext(
+        root=str(root) if root is not None else None,
+        config=str(config) if config is not None else None,
+    )
+
+
+def _emit_results(
+    results, fmt: str, output_file: Path | None, kind, elapsed_ms, gates, ctx=None
+) -> None:
     from hallow.output import format_results
     from hallow.output.envelope import check_output
 
     if fmt == "json":
-        doc = check_output(results, kind, elapsed_ms, gates)
+        doc = check_output(results, kind, elapsed_ms, gates, ctx)
         _write(doc.model_dump_json(indent=2), output_file)
         return
 
@@ -368,7 +400,7 @@ def health(
         from hallow.core.discovery import discover_python_files
         from hallow.core.health import compute_file_health, compute_project_health
         from hallow.extract import extract_modules_parallel
-        from hallow.output.envelope import HealthOutput
+        from hallow.output.envelope import HealthOutput, NextStep
         from hallow.output.formatters import format_health
 
         start = time.monotonic()
@@ -385,7 +417,20 @@ def health(
         ]
 
         if fmt == "json":
-            doc = HealthOutput(elapsed_ms=_elapsed_ms(start), project=project, files=file_healths)
+            doc = HealthOutput(
+                elapsed_ms=_elapsed_ms(start),
+                project=project,
+                files=file_healths,
+                next_steps=[]
+                if not project.hotspots
+                else [
+                    NextStep(
+                        id="check-complexity",
+                        command=_context(root, config).command("check", "--format", "json"),
+                        reason=f"{len(project.hotspots)} file(s) hold complexity hotspots",
+                    )
+                ],
+            )
             _write(doc.model_dump_json(indent=2), output_file)
             return 0
 
@@ -423,20 +468,27 @@ def dupes(
     def body() -> int:
         from hallow.core.discovery import discover_python_files
         from hallow.core.duplicates import detect_duplicates
+        from hallow.core.suppressions import apply_suppressions
+        from hallow.extract import extract_modules_parallel
         from hallow.identity import stamp_identities
         from hallow.output.envelope import DupesOutput, finding_output, findings_gate
         from hallow.output.formatters import format_dupes
 
         start = time.monotonic()
         fmt = _check_format(format, DOC_FORMATS)
-        if mode not in ("strict", "mild", "weak", "semantic"):
+        if mode not in DUPE_MODES:
             raise HallowError(
                 f"unknown mode '{mode}'; expected one of: strict, mild, weak, semantic",
                 code="HALLOW_INVALID_MODE",
             )
         overrides = {"duplicates": {"mode": mode, "min_tokens": min_tokens, "min_lines": min_lines}}
         cfg = _load_config(root, config, overrides)
-        groups, findings = detect_duplicates(discover_python_files(cfg), cfg.root.resolve(), cfg)
+        files = discover_python_files(cfg)
+        groups, findings = detect_duplicates(files, cfg.root.resolve(), cfg)
+        # the same `# hallow-ignore` handling as the full analysis, so a clone
+        # suppressed there cannot fail `dupes --fail-on-issues`
+        modules = extract_modules_parallel(files, cfg.root.resolve())
+        findings = apply_suppressions(findings, modules, cfg, report_stale=False)
         stamp_identities(findings)
         gates = {"findings": findings_gate(findings, fail_on_issues)}
 
@@ -581,7 +633,10 @@ def security(
         results.sort()
 
         gates = {"findings": findings_gate(results.findings, fail_on_issues)}
-        _emit_results(results, out_fmt, output_file, "security", _elapsed_ms(start), gates)
+        _emit_results(
+            results, out_fmt, output_file, "security", _elapsed_ms(start), gates,
+            _context(root, config),
+        )  # fmt: skip
         return _exit_for(gates)
 
     _guarded(fmt, body)
@@ -639,24 +694,33 @@ def baselines_prune(
     def body() -> int:
         from hallow.core import analyze
         from hallow.core.baseline import prune_baseline
-        from hallow.output.envelope import PruneFile, PruneOutput
+        from hallow.output.envelope import PruneFile, PruneOutput, prune_gate
 
+        start = time.monotonic()
         fmt = _check_format(format, DOC_FORMATS)
         cfg = _load_config(root, config)
         item = PruneFile(**prune_baseline(analyze(cfg), baseline, check=check))
 
+        if item.status in ("refused", "error"):
+            # exit 2 is invalid input: the error document, not a prune document
+            raise HallowError(
+                f"{baseline}: {item.reason}",
+                code="HALLOW_BASELINE_REFUSED" if item.status == "refused" else "HALLOW_NOT_FOUND",
+            )
         if fmt == "json":
-            typer.echo(PruneOutput(check=check, files=[item]).model_dump_json(indent=2))
-        elif item.status in ("refused", "error"):
-            typer.echo(f"{baseline}: {item.status} — {item.reason}", err=True)
+            doc = PruneOutput(
+                elapsed_ms=_elapsed_ms(start),
+                check=check,
+                files=[item],
+                gate_outcomes={"prune-check": prune_gate(item.status, check)},
+            )
+            typer.echo(doc.model_dump_json(indent=2))
         else:
             before, after = item.entries_before or 0, item.entries_after or 0
             typer.echo(f"{baseline}: {item.status} ({before - after} stale of {before} entries)")
             for r in item.removed:
                 typer.echo(f"  - {r.key}" + (f" (x{r.count})" if r.count > 1 else ""))
 
-        if item.status in ("refused", "error"):
-            return INVALID_INPUT
         return ISSUES if check and item.status == "would-prune" else 0
 
     _guarded(format, body)

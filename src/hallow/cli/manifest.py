@@ -52,12 +52,19 @@ def _type_name(t: Any) -> str:
     return {"integer": "integer", "path": "path", "float": "number"}.get(name, "string")
 
 
-def _flags(command: Any) -> list[dict[str, Any]]:
-    return [
-        _flag(p)
-        for p in command.params
-        if getattr(p, "param_type_name", "") == "option" and p.name not in _SKIP_PARAMS
-    ]
+def _flags(command: Any, name: str = "") -> list[dict[str, Any]]:
+    from hallow.cli.main import FLAG_VALUES
+
+    out = []
+    for p in command.params:
+        if getattr(p, "param_type_name", "") != "option" or p.name in _SKIP_PARAMS:
+            continue
+        item = _flag(p)
+        values = FLAG_VALUES.get((name, item["name"]))
+        if values and "possible_values" not in item:
+            item["possible_values"] = list(values)
+        out.append(item)
+    return out
 
 
 def _commands(group: Any, prefix: str = "") -> list[dict[str, Any]]:
@@ -69,7 +76,7 @@ def _commands(group: Any, prefix: str = "") -> list[dict[str, Any]]:
             result.extend(_commands(cmd, f"{full} "))
             continue
         description = (cmd.help or "").strip().split("\n", 1)[0]
-        result.append({"name": full, "description": description, "flags": _flags(cmd)})
+        result.append({"name": full, "description": description, "flags": _flags(cmd, full)})
     return result
 
 

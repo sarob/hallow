@@ -152,7 +152,7 @@ def _print_health_summary(console: Console, health: ProjectHealth) -> None:
 def format_json(results: AnalysisResults, file: Any = None) -> str:
     from hallow.output.envelope import check_output
 
-    output = check_output(results, "check", 0, {}).model_dump(mode="json")
+    output = check_output(results, "check", 0).model_dump(mode="json")
     text = json.dumps(output, indent=2)
     if file:
         file.write(text)
