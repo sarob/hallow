@@ -669,7 +669,7 @@ def audit(
         elapsed = _elapsed_ms(start)
 
         if out_fmt == "json":
-            doc = audit_output(result, elapsed, _context(root, config))
+            doc = audit_output(result, elapsed, _context(cfg, config))
             _write(doc.model_dump_json(indent=2), output_file)
         elif out_fmt == "human":
             _print_audit(result, output_file)

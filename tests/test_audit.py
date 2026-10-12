@@ -57,6 +57,10 @@ def test_inherited_finding_in_touched_file_passes(repo: Path):
     # the shared document envelope, and a next step that targets this project
     assert {"kind", "schema_version", "version", "elapsed_ms", "gate_outcomes"} <= set(doc)
     assert "--root" in doc["next_steps"][0]["command"]
+    import shlex
+
+    argv = shlex.split(doc["next_steps"][0]["command"])
+    assert Path(argv[argv.index("--root") + 1]) == repo.resolve()
 
 
 def test_introduced_finding_fails(repo: Path):
