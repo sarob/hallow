@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 from typer.testing import CliRunner
 
 from hallow.cli.main import app
 
+_ANSI = re.compile(r"\x1b\[[0-9;]*m")
+
 
 def _flat(output: str) -> str:
-    """Error text without rich's box border and line wrapping."""
-    return " ".join(output.replace("│", " ").split())
+    """Error text without ANSI colour codes, rich's box border or line wrapping.
+
+    On GitHub Actions rich colours its error box, which splits the message
+    with escape codes.
+    """
+    return " ".join(_ANSI.sub("", output).replace("│", " ").split())
 
 
 def test_boundaries_preset_reports_violation(tmp_path: Path):
