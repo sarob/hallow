@@ -82,6 +82,10 @@ def test_reassigned_or_mutated_all_is_skipped():
         '__all__ = ["gone"]\n__all__[:] = []\n',
         '__all__ = ["gone"]\n(__all__ := [])\n',
         '__all__ = ["gone"]\ndef reset():\n    global __all__\n    __all__ = []\n',
+        # review of #21, round 2: unpacking rebinds __all__ too
+        '__all__ = ["gone"]\n__all__, marker = [], 0\n',
+        '__all__ = ["gone"]\n[__all__] = [[]]\n',
+        '__all__ = ["gone"]\nfor __all__ in ([],):\n    pass\n',
     ):
         assert _entries({"m.py": src}) == [], src
 
@@ -145,3 +149,17 @@ def test_finding_fields_through_analyze(tmp_path):
     off = HallowConfig(root=tmp_path)
     off.rules.overrides["unused-all-entries"] = Severity.OFF
     assert not [f for f in analyze(off).findings if f.rule == RuleId.UNUSED_ALL_ENTRIES]
+
+
+def test_unpacked_rebinding_through_analyze(tmp_path):
+    from hallow.core import analyze
+    from hallow.types import RuleId
+
+    (tmp_path / "m.py").write_text('__all__ = ["gone"]\n__all__, marker = [], 0\n')
+    rules = {f.rule for f in analyze(HallowConfig(root=tmp_path)).findings}
+    assert RuleId.UNUSED_ALL_ENTRIES not in rules
+
+
+def test_annotation_only_redeclaration_is_not_a_rebinding():
+    msgs = _entries({"m.py": '__all__ = ["gone"]\n__all__: list[str]\n'})
+    assert msgs == ["'gone' is listed in __all__ but not defined or imported"]
