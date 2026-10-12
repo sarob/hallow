@@ -125,3 +125,102 @@ def test_unreachable_files():
     graph = ModuleGraph(modules, Path("."))
     unreachable = graph.unreachable_files()
     assert "lib.py" not in unreachable
+
+
+def test_namespace_package_import_is_internal():
+    # PEP 420: `ns/` has no __init__.py, but `import ns.mod` / `from ns import mod`
+    # are project imports, not third-party dependencies.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["mod"]), _import("ns.sub")]),
+        "ns/mod.py": _make_module("ns/mod.py"),
+        "ns/sub/thing.py": _make_module("ns/sub/thing.py"),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert graph.all_external_imports() == set()
+    assert "ns/mod.py" in graph.imports_of("app.py")
+
+
+def test_namespace_child_missing_locally_is_external():
+    # Review of #18: ns/ holds local code, but `ns.remote` comes from an
+    # installed distribution sharing the namespace.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["remote"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}
+
+
+def test_mixed_namespace_import_keeps_local_edge_and_external_name():
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["local", "remote"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert graph.all_external_imports() == {"ns"}
+    assert "ns/local.py" in graph.imports_of("app.py")
+
+
+def test_src_layout_namespace_package_is_internal():
+    modules = {
+        "src/app.py": _make_module("src/app.py", [_import("ns", ["mod"]), _import("ns.sub")]),
+        "src/ns/mod.py": _make_module("src/ns/mod.py"),
+        "src/ns/sub/thing.py": _make_module("src/ns/sub/thing.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == set()
+
+
+def test_declared_namespace_distribution_is_not_reported_unused(tmp_path):
+    # The detector-level consequence: losing the external name made a
+    # declared, installed dependency look unused.
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = ["ns"]\n')
+    (tmp_path / "ns").mkdir()
+    (tmp_path / "ns" / "local.py").write_text("x = 1\n")
+    (tmp_path / "app.py").write_text("from ns import local, remote\nprint(local, remote)\n")
+    rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
+    assert "unused-dependencies" not in rules
+    assert "unlisted-dependencies" not in rules
+
+
+def test_namespace_module_attributes_are_not_child_modules():
+    # Review of #18, round 2: `from ns import __path__` is a namespace
+    # package attribute, not a missing child from another distribution.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["__path__", "local"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == set()
+
+
+def test_namespace_attribute_import_reports_no_dependency(tmp_path):
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = []\n')
+    (tmp_path / "ns").mkdir()
+    (tmp_path / "ns" / "local.py").write_text("x = 1\n")
+    (tmp_path / "app.py").write_text("from ns import __path__, local\nprint(__path__, local)\n")
+    rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
+    assert "unlisted-dependencies" not in rules
+
+
+def test_unknown_dunder_child_is_still_external():
+    # Review of #21, round 2: only real module attributes are exempt.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["__vendor__"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}
+
+
+def test_names_a_namespace_package_does_not_define_are_children():
+    # Review of #18, round 3: a namespace package has no __all__, so
+    # `from ns import __all__` names a child (here, not local: external).
+    for name in ("__all__", "__builtins__", "__cached__"):
+        modules = {
+            "app.py": _make_module("app.py", [_import("ns", [name])]),
+            "ns/local.py": _make_module("ns/local.py"),
+        }
+        assert ModuleGraph(modules, Path(".")).all_external_imports() == {"ns"}, name
