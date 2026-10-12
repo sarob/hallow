@@ -1,4 +1,9 @@
-"""Duplication detection — tokenize, build suffix array, find clones."""
+"""Duplication detection — tokenize, hash fixed token windows, extend matches into clones.
+
+Every `min_tokens`-long window of the normalized token stream is hashed;
+windows sharing a hash are candidate clones, extended token by token to the
+longest common run, then collapsed so overlapping shifted windows report once.
+"""
 
 from __future__ import annotations
 
@@ -59,35 +64,33 @@ def tokenize_file(path: Path, root: Path, mode: str) -> list[_Token]:
     return tokens
 
 
+# f-string / t-string literal text (3.12+ tokenizes these piecewise).
+_STRING_PIECES = {
+    getattr(tokenize, name)
+    for name in ("FSTRING_MIDDLE", "TSTRING_MIDDLE")
+    if hasattr(tokenize, name)
+}
+
+
 def _normalize_token(tok: tokenize.TokenInfo, mode: str) -> str:
-    if mode == "strict":
-        return tok.string
-    if mode == "mild":
-        if tok.type == tokenize.NAME and not _is_keyword(tok.string):
-            return "$ID"
-        if tok.type == tokenize.STRING:
-            return "$STR"
-        if tok.type == tokenize.NUMBER:
-            return "$NUM"
-        return tok.string
+    """Normalize a token for the detection mode, matching fallow's modes.
+
+    strict, mild: every token kept as written. Comments, whitespace and line
+        structure are already dropped by the tokenizer, so the two are equal.
+    weak: string literal values blinded.
+    semantic: identifiers, string and numeric literal values blinded, so
+        renamed copies (type-2 clones) match.
+    """
+    is_string = tok.type == tokenize.STRING or tok.type in _STRING_PIECES
     if mode == "weak":
-        if tok.type == tokenize.NAME:
-            return "$ID" if not _is_keyword(tok.string) else tok.string
-        if tok.type == tokenize.STRING:
-            return "$STR"
-        if tok.type == tokenize.NUMBER:
-            return "$NUM"
-        if tok.type == tokenize.OP:
-            return "$OP"
-        return tok.string
+        return "$STR" if is_string else tok.string
     if mode == "semantic":
         if tok.type == tokenize.NAME and not _is_keyword(tok.string):
             return "$ID"
-        if tok.type == tokenize.STRING:
+        if is_string:
             return "$STR"
         if tok.type == tokenize.NUMBER:
             return "$NUM"
-        return tok.string
     return tok.string
 
 
