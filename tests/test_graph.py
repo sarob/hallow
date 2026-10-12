@@ -182,3 +182,25 @@ def test_declared_namespace_distribution_is_not_reported_unused(tmp_path):
     rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
     assert "unused-dependencies" not in rules
     assert "unlisted-dependencies" not in rules
+
+
+def test_namespace_module_attributes_are_not_child_modules():
+    # Review of #18, round 2: `from ns import __path__` is a namespace
+    # package attribute, not a missing child from another distribution.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["__path__", "local"])]),
+        "ns/local.py": _make_module("ns/local.py"),
+    }
+    assert ModuleGraph(modules, Path(".")).all_external_imports() == set()
+
+
+def test_namespace_attribute_import_reports_no_dependency(tmp_path):
+    from hallow.config.loader import HallowConfig
+    from hallow.core import analyze
+
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "x"\ndependencies = []\n')
+    (tmp_path / "ns").mkdir()
+    (tmp_path / "ns" / "local.py").write_text("x = 1\n")
+    (tmp_path / "app.py").write_text("from ns import __path__, local\nprint(__path__, local)\n")
+    rules = {f.rule.value for f in analyze(HallowConfig(root=tmp_path)).findings}
+    assert "unlisted-dependencies" not in rules

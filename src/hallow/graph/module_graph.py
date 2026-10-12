@@ -14,6 +14,10 @@ def _is_project_package(module: str, project_dirs: set[str]) -> bool:
     return base in project_dirs or f"src/{base}" in project_dirs
 
 
+def _is_dunder(name: str) -> bool:
+    return len(name) > 4 and name.startswith("__") and name.endswith("__")
+
+
 def _is_local_child(module: str, name: str, all_paths: set[str], project_dirs: set[str]) -> bool:
     base = module.replace(".", "/")
     for prefix in (base, f"src/{base}"):
@@ -65,12 +69,14 @@ class ModuleGraph:
                     top_level = imp.module.split(".")[0] if imp.module else ""
                     internal = _is_project_package(imp.module, project_dirs)
                     if internal and imp.is_from_import and imp.names:
-                        # A namespace package has no attributes of its own, so
-                        # every requested name is a child module. A child the
+                        # A namespace package has no attributes besides the
+                        # module ones (`__path__`, `__name__`, ...), so every
+                        # other requested name is a child module. A child the
                         # project does not contain comes from another
                         # distribution sharing the namespace: external.
                         internal = all(
                             name == "*"
+                            or _is_dunder(name)
                             or _is_local_child(imp.module, name, all_paths, project_dirs)
                             for name in imp.names
                         )
