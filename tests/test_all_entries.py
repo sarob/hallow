@@ -66,3 +66,58 @@ def test_dynamic_modules_skipped():
     assert _entries({"m.py": 'from os.path import *\n__all__ = ["join"]\n'}) == []
     assert _entries({"m.py": 'globals()["x"] = 1\n__all__ = ["x"]\n'}) == []
     assert _entries({"m.py": 'def __getattr__(name): ...\n__all__ = ["lazy"]\n'}) == []
+
+
+# ── review of #16 ──
+
+
+def test_reassigned_or_mutated_all_is_skipped():
+    assert _entries({"m.py": '__all__ = ["gone"]\n__all__ = []\n'}) == []
+    assert _entries({"m.py": '__all__ = ["gone"]\n__all__.remove("gone")\n'}) == []
+    assert _entries({"m.py": '__all__ = ["a"]\n__all__ += ["b"]\na = b = 1\n'}) == []
+
+
+def test_namespace_subpackage_and_excluded_submodule_count(tmp_path):
+    # Through analyze(), so discovery applies: pkg/ns has no __init__.py
+    # (PEP 420), and pkg/build is excluded from analysis by the default
+    # `**/build/**` ignore but is still importable.
+    from hallow.core import analyze
+    from hallow.types import RuleId
+
+    for rel, text in {
+        "pkg/__init__.py": '__all__ = ["ns", "build", "missing"]\n',
+        "pkg/ns/mod.py": "x = 1\n",
+        "pkg/build/__init__.py": "y = 2\n",
+    }.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    results = analyze(HallowConfig(root=tmp_path))
+    msgs = [f.message for f in results.findings if f.rule == RuleId.UNUSED_ALL_ENTRIES]
+    assert msgs == ["'missing' is listed in __all__ but not defined or imported"]
+
+
+def test_implicit_module_names_are_bound():
+    assert _entries({"m.py": '__all__ = ["__name__", "__doc__"]\n'}) == []
+    assert _entries({"pkg/__init__.py": '__all__ = ["__path__"]\n'}) == []
+
+
+def test_annotation_without_value_binds_nothing():
+    msgs = _entries({"m.py": 'x: int\n__all__ = ["x"]\n'})
+    assert msgs == ["'x' is listed in __all__ but not defined or imported"]
+
+
+def test_finding_fields_through_analyze(tmp_path):
+    from hallow.core import analyze
+    from hallow.types import RuleId, Severity
+
+    (tmp_path / "m.py").write_text('import os\nprint(os)\n\n__all__ = ["gone"]\n')
+    [f] = [
+        f for f in analyze(HallowConfig(root=tmp_path)).findings
+        if f.rule == RuleId.UNUSED_ALL_ENTRIES
+    ]  # fmt: skip
+    assert (f.severity, f.location.file, f.location.line) == (Severity.WARN, "m.py", 4)
+    assert (f.fix.kind, f.fix.target, f.fix.auto_fixable) == ("remove_from_all", "gone", False)
+
+    off = HallowConfig(root=tmp_path)
+    off.rules.overrides["unused-all-entries"] = Severity.OFF
+    assert not [f for f in analyze(off).findings if f.rule == RuleId.UNUSED_ALL_ENTRIES]
