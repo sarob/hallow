@@ -100,7 +100,7 @@ It uses Python's built-in `ast` module — no external parser — and produces u
 
 ## Architecture
 
-Nine modules mirroring Fallow's crate structure:
+Ten packages, one per pipeline stage or surface:
 
 | Module | Role |
 |--------|------|
@@ -108,11 +108,12 @@ Nine modules mirroring Fallow's crate structure:
 | `hallow.config` | Config from `.hallowrc.toml` or `pyproject.toml [tool.hallow]`. Zero-config defaults. |
 | `hallow.extract` | AST extraction via `ast.parse()`. Produces ModuleInfo per file: imports, exports, `__all__`, complexity. |
 | `hallow.graph` | Module graph from ModuleInfo. Import resolution, reachability, cycle detection (Tarjan's SCC). |
-| `hallow.core` | Analysis orchestration. Detectors run in parallel: dead code, unused deps, circular imports, duplication, boundaries. |
+| `hallow.core` | Analysis orchestration. Detectors run in sequence over one module graph: dead code, unused deps, circular imports, duplication, boundaries. |
+| `hallow.security` | Hardcoded-secret and taint-sink detectors. |
 | `hallow.plugins` | Framework awareness. Auto-activated from `pyproject.toml` deps: Django, Flask, FastAPI, pytest, Celery. |
 | `hallow.output` | Formatters: JSON, SARIF, Markdown, CodeClimate, GitHub annotations, compact, human (Rich ANSI). |
-| `hallow.cli` | Typer CLI: `hallow check`, `health`, `dupes`, `audit`, `fix`, `security`, `watch`. |
-| `hallow.mcp` | MCP server. 12+ tools for agent-driven codebase intelligence. |
+| `hallow.cli` | Typer CLI: `hallow check`, `health`, `dupes`, `audit`, `fix`, `security`, `mcp`. |
+| `hallow.mcp` | MCP server. 6 tools for agent-driven codebase intelligence. |
 
 ## Features
 
@@ -234,11 +235,11 @@ def nightly_rollup(): ...
 Hallow is not a port of Fallow — it's built for Python's idioms:
 
 - **`ast.parse()` over OXC** — Python's built-in AST is fast, complete, and zero-dependency. Handles all 3.11+ syntax.
-- **Import resolution** — relative imports, namespace packages, conditional imports (`try/except`), lazy imports, `sys.path` manipulation.
+- **Import resolution** — relative imports, namespace packages (PEP 420, no `__init__.py`), conditional imports (`try/except`), function-level imports.
 - **No explicit exports** — Python uses `__all__` (optional) and convention (leading underscore). Hallow treats all public module-level names as exports unless `__all__` narrows the surface.
 - **Dynamic features** — `getattr()`, `**kwargs`, metaclasses, decorator registries. Framework plugins handle common patterns; suppression comments handle the rest.
 - **`pyproject.toml` over `package.json`** — dependency parsing from `[project.dependencies]`, `[project.optional-dependencies]`, `requirements.txt` fallback.
-- **Parallelism via `ProcessPoolExecutor`** — Python's GIL makes threading insufficient for CPU-bound AST parsing. Content-hash caching keeps re-analysis fast.
+- **Parallelism via `ProcessPoolExecutor`** — Python's GIL makes threading insufficient for CPU-bound AST parsing, so files are parsed in worker processes (50+ files).
 
 ## Stack
 
