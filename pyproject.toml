@@ -61,6 +61,15 @@ ignore = ["B008", "SIM115"]
 testpaths = ["tests"]
 addopts = "-ra -q"
 
+[tool.coverage.run]
+source = ["hallow"]
+
+[tool.coverage.report]
+# CI fails below this line coverage (`pytest --cov`); raise it as tests grow.
+fail_under = 80
+show_missing = true
+skip_covered = true
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
