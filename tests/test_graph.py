@@ -125,3 +125,16 @@ def test_unreachable_files():
     graph = ModuleGraph(modules, Path("."))
     unreachable = graph.unreachable_files()
     assert "lib.py" not in unreachable
+
+
+def test_namespace_package_import_is_internal():
+    # PEP 420: `ns/` has no __init__.py, but `import ns.mod` / `from ns import mod`
+    # are project imports, not third-party dependencies.
+    modules = {
+        "app.py": _make_module("app.py", [_import("ns", ["mod"]), _import("ns.sub")]),
+        "ns/mod.py": _make_module("ns/mod.py"),
+        "ns/sub/thing.py": _make_module("ns/sub/thing.py"),
+    }
+    graph = ModuleGraph(modules, Path("."))
+    assert graph.all_external_imports() == set()
+    assert "ns/mod.py" in graph.imports_of("app.py")
