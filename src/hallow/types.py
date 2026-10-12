@@ -101,6 +101,9 @@ class ModuleInfo(BaseModel):
     bound_names: set[str] = Field(default_factory=set)
     # `from x import *`, `globals()[...]`, `exec(...)`: bindings not visible statically
     has_dynamic_bindings: bool = False
+    # `__all__` is assigned more than once, augmented, or mutated by a method
+    # call, so the first literal list is not what star-import exports
+    all_modified: bool = False
     functions: list[FunctionComplexity] = Field(default_factory=list)
     classes: list[str] = Field(default_factory=list)
     global_variables: list[str] = Field(default_factory=list)

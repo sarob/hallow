@@ -229,6 +229,31 @@ def _extract_all_list(tree: ast.Module) -> tuple[list[str] | None, int]:
 _DYNAMIC_BINDERS = frozenset({"globals", "exec", "setattr", "vars"})
 
 
+def _all_is_modified(tree: ast.Module) -> bool:
+    """True unless `__all__` is bound exactly once and never mutated in place."""
+    writes = 0
+    for node in ast.walk(tree):
+        targets: list[ast.expr] = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+            if isinstance(node, ast.AugAssign) and _names_all(node.target):
+                return True
+        writes += sum(1 for t in targets for n in ast.walk(t) if _names_all(n))
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Attribute)
+            and _names_all(node.func.value)
+        ):
+            return True  # __all__.append/extend/remove/...
+    return writes > 1
+
+
+def _names_all(node: ast.AST) -> bool:
+    return isinstance(node, ast.Name) and node.id == "__all__"
+
+
 def _collect_module_bindings(tree: ast.Module) -> tuple[set[str], bool]:
     """Names bound at module scope, and whether the module binds names dynamically.
 
@@ -263,7 +288,11 @@ def _collect_module_bindings(tree: ast.Module) -> tuple[set[str], bool]:
             elif isinstance(node, ast.Assign):
                 for t in node.targets:
                     add_target(t)
-            elif isinstance(node, (ast.AnnAssign, ast.AugAssign, ast.For, ast.AsyncFor)):
+            elif isinstance(node, ast.AnnAssign):
+                # `x: int` alone declares an annotation but binds no value
+                if node.value is not None:
+                    add_target(node.target)
+            elif isinstance(node, (ast.AugAssign, ast.For, ast.AsyncFor)):
                 add_target(node.target)
             elif isinstance(node, (ast.With, ast.AsyncWith)):
                 for item in node.items:
@@ -509,6 +538,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
 
     all_list, all_line = _extract_all_list(tree)
     bound_names, has_dynamic_bindings = _collect_module_bindings(tree)
+    all_modified = all_list is not None and _all_is_modified(tree)
 
     exports: list[ExportInfo] = []
     classes: list[str] = []
@@ -567,6 +597,7 @@ def extract_module(path: Path, root: Path | None = None) -> ModuleInfo | None:
         all_line=all_line,
         bound_names=bound_names,
         has_dynamic_bindings=has_dynamic_bindings,
+        all_modified=all_modified,
         functions=functions,
         classes=classes,
         global_variables=global_vars,
