@@ -72,9 +72,27 @@ def test_dynamic_modules_skipped():
 
 
 def test_reassigned_or_mutated_all_is_skipped():
-    assert _entries({"m.py": '__all__ = ["gone"]\n__all__ = []\n'}) == []
-    assert _entries({"m.py": '__all__ = ["gone"]\n__all__.remove("gone")\n'}) == []
-    assert _entries({"m.py": '__all__ = ["a"]\n__all__ += ["b"]\na = b = 1\n'}) == []
+    for src in (
+        '__all__ = ["gone"]\n__all__ = []\n',
+        '__all__ = ["gone"]\n__all__.remove("gone")\n',
+        '__all__ = ["gone"]\n__all__.clear()\n',
+        # review of #16, round 2: each of these left a false "gone" warning
+        '__all__ = ["gone"]\n__all__ *= 0\n',
+        '__all__ = ["gone"]\ndel __all__[:]\n',
+        '__all__ = ["gone"]\n__all__[:] = []\n',
+        '__all__ = ["gone"]\n(__all__ := [])\n',
+        '__all__ = ["gone"]\ndef reset():\n    global __all__\n    __all__ = []\n',
+    ):
+        assert _entries({"m.py": src}) == [], src
+
+
+def test_local_or_read_only_use_of_all_does_not_hide_findings():
+    # Review of #16, round 2: these do not change the module's __all__.
+    expected = ["'gone' is listed in __all__ but not defined or imported"]
+    local = '__all__ = ["gone"]\ndef f():\n    __all__ = []\n    return __all__\n'
+    read = '__all__ = ["gone"]\nN = __all__.count("gone")\n'
+    assert _entries({"m.py": local}) == expected
+    assert _entries({"m.py": read}) == expected
 
 
 def test_namespace_subpackage_and_excluded_submodule_count(tmp_path):
@@ -91,7 +109,13 @@ def test_namespace_subpackage_and_excluded_submodule_count(tmp_path):
     }.items():
         (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
         (tmp_path / rel).write_text(text)
-    results = analyze(HallowConfig(root=tmp_path))
+    cfg = HallowConfig(root=tmp_path)
+    # build/ really is excluded from analysis, yet `build` is not reported
+    from hallow.core.discovery import discover_python_files
+
+    found = {f.relative_to(tmp_path.resolve()).as_posix() for f in discover_python_files(cfg)}
+    assert "pkg/build/__init__.py" not in found
+    results = analyze(cfg)
     msgs = [f.message for f in results.findings if f.rule == RuleId.UNUSED_ALL_ENTRIES]
     assert msgs == ["'missing' is listed in __all__ but not defined or imported"]
 
