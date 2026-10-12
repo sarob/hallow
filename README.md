@@ -240,7 +240,7 @@ $ hallow audit
 Audit scope: 3 changed file(s) vs merge-base with origin/main (4c1d9e2a7b10)
 
 app/payments.py
-  E new unused-imports 're' imported from 're' is unused app/payments.py:4
+  E new unused-imports 're' (import re) is unused app/payments.py:4
   W inherited high-complexity 'charge' has cyclomatic complexity 24 (max 20) app/payments.py:88
 
 ✗ fail: 1 finding(s) gated · 1 inherited excluded (run with --gate all to enforce)
