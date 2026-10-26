@@ -10,7 +10,7 @@ readme = "README.md"
 license = "Apache-2.0"
 requires-python = ">=3.11"
 authors = [
-    { name = "Sean Roberts", email = "sroberts@fulcrumdefense.ai" },
+    { name = "Sean Roberts", email = "seanroberts66@gmail.com" },
 ]
 keywords = ["static-analysis", "dead-code", "complexity", "duplication", "python", "lint"]
 classifiers = [
