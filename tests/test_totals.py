@@ -16,7 +16,7 @@ from hallow.types import (
 
 def test_cycles_and_duplicates_are_not_counted_twice():
     # Regression: each cycle and clone group already has a finding, and
-    # compute_totals added them again (fd-platform: 1243 total vs 699 findings).
+    # compute_totals added them again (observed on a large project: 1243 total vs 699 findings).
     results = AnalysisResults(
         findings=[
             Finding(rule=RuleId.CIRCULAR_DEPENDENCIES, message="c", location=Location(file="a.py")),

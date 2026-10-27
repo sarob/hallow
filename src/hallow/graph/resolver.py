@@ -35,8 +35,8 @@ def resolve_submodule(
 ) -> str | None:
     """Resolve `from <pkg> import <name>` to a submodule file, if one exists.
 
-    `from fulcrum_cli.commands import bootstrap` imports the *module*
-    `fulcrum_cli/commands/bootstrap.py`, not a symbol of the package. Returns the
+    `from mypkg.commands import bootstrap` imports the *module*
+    `mypkg/commands/bootstrap.py`, not a symbol of the package. Returns the
     submodule path when it exists in the project, else None (so ordinary symbol
     imports like `from typing import List` never create spurious edges).
     """
