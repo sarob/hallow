@@ -6,6 +6,7 @@ Built from the live command definitions, so it cannot drift from the CLI
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import typer
@@ -25,13 +26,16 @@ _SKIP_PARAMS = {"version", "install_completion", "show_completion", "help"}
 # Typer 0.2x vendors click privately, so commands and options are read by
 # duck typing rather than isinstance checks against click classes.
 
+_CLICK_TYPE_NAMES = {"integer": "integer", "path": "path", "float": "number"}
+_ANNOTATION_NAMES: dict[Any, str] = {int: "integer", float: "number", Path: "path"}
+
 
 def _flag(param: Any) -> dict[str, Any]:
     longs = [o for o in param.opts if o.startswith("--")]
     shorts = [o for o in param.opts if not o.startswith("--")]
     item: dict[str, Any] = {
         "name": longs[0] if longs else param.opts[0],
-        "type": "bool" if param.is_flag else _type_name(param.type),
+        "type": "bool" if param.is_flag else _type_name(param),
         "required": bool(param.required),
         "description": param.help or "",
     }
@@ -42,15 +46,27 @@ def _flag(param: Any) -> dict[str, Any]:
     default = param.default
     if default is not None and not callable(default) and not param.required:
         item["default"] = default if isinstance(default, bool | int | str) else str(default)
-    choices = getattr(param.type, "choices", None)
+    choices = getattr(getattr(param, "type", None), "choices", None)
     if choices:
         item["possible_values"] = list(choices)
     return item
 
 
-def _type_name(t: Any) -> str:
-    name = getattr(t, "name", "")
-    return {"integer": "integer", "path": "path", "float": "number"}.get(name, "string")
+def _type_name(param: Any) -> str:
+    """The manifest type of the value an option takes.
+
+    Through Typer 0.28 an option carries a click-style `type` with a `name`.
+    From 0.29, where Typer validates with Pydantic, it carries a
+    `type_descriptor` holding the Python annotation instead.
+    """
+    click_type = getattr(param, "type", None)
+    if click_type is not None:
+        return _CLICK_TYPE_NAMES.get(getattr(click_type, "name", ""), "string")
+    annotation = getattr(getattr(param, "type_descriptor", None), "annotation", None)
+    try:
+        return _ANNOTATION_NAMES.get(annotation, "string")
+    except TypeError:  # an unhashable annotation names no manifest type
+        return "string"
 
 
 def _flags(command: Any, name: str = "") -> list[dict[str, Any]]:
