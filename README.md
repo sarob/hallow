@@ -122,6 +122,7 @@ The source is organised as these modules and packages, one per pipeline stage or
 - Unused files (unreachable from entry points)
 - Unused imports, functions, classes, variables
 - Unused dependencies (declared in `pyproject.toml`, or `requirements.txt` when there is no `[project]` table, but never imported)
+- Names re-exported by a star import (`from .module import *`) count as used: in a package `__init__.py`, everything the module exports; elsewhere, the names the importing module references, lists in its own `__all__`, or passes on to its own importers. Upgrading from 0.2.0: a `# hallow-ignore` comment that silenced one of those findings now reports `stale-suppression`, and a baseline entry for one is stale, so run `hallow baselines prune --baseline <file>`.
 - Unlisted dependencies (imported but not declared)
 - `__all__` entries that name nothing the module defines or imports
 
@@ -294,7 +295,7 @@ Scripts and agents should use `--format json`. Each command writes one document 
 
 An error raised while a command runs (unreadable config, unwritable `--output`, unknown `--format`, a refused baseline) is, under `--format json`, a document on stdout rather than a traceback: `{"error": true, "message": "...", "exit_code": 2, "code": "..."}`. Command-line usage errors caught by the argument parser (an unknown option, an invalid `--boundaries` value, options placed before the command) exit 2 with a text message on stderr.
 
-`hallow schema` prints every command, flag, output format, exit code and rule as JSON. `hallow schema --output-schema` prints the JSON Schema of every document, committed as [`docs/output-schema.json`](docs/output-schema.json).
+`hallow schema` prints every command, flag, output format, exit code and rule as JSON. `hallow schema --output-schema` prints the JSON Schema of every document, committed as [`docs/output-schema.json`](https://github.com/sarob/hallow/blob/main/docs/output-schema.json).
 
 ## Python-Specific Design
 
@@ -331,4 +332,4 @@ uv run hallow check --root .  # self-analysis
 
 ## License
 
-Apache License 2.0 — see [LICENSE](LICENSE) for details.
+Apache License 2.0 — see [LICENSE](https://github.com/sarob/hallow/blob/main/LICENSE) for details.
