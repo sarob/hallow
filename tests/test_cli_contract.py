@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
+import pytest
 from typer.testing import CliRunner
 
 from hallow.cli.main import app
+from hallow.cli.manifest import _type_name
 from hallow.output.envelope import output_json_schema
 
 runner = CliRunner()
@@ -150,7 +153,31 @@ def test_schema_manifest_lists_commands_flags_and_exit_codes():
     flags = {f["name"]: f for f in check["flags"]}
     assert flags["--fail-on-issues"]["type"] == "bool"
     assert flags["--format"]["short"] == "-f"
+    assert (flags["--root"]["type"], flags["--format"]["type"]) == ("path", "string")
+    dupes = next(c for c in doc["commands"] if c["name"] == "dupes")
+    assert {f["name"]: f["type"] for f in dupes["flags"]}["--min-tokens"] == "integer"
     assert {r["id"] for r in doc["issue_types"]} >= {"unused-imports", "stale-suppression"}
+
+
+@pytest.mark.parametrize(
+    ("option", "expected"),
+    [
+        # Typer through 0.28: a click-style type with a name
+        (SimpleNamespace(type=SimpleNamespace(name="integer")), "integer"),
+        (SimpleNamespace(type=SimpleNamespace(name="float")), "number"),
+        (SimpleNamespace(type=SimpleNamespace(name="path")), "path"),
+        (SimpleNamespace(type=SimpleNamespace(name="text")), "string"),
+        # Typer 0.29 and later: a type descriptor holding the annotation
+        (SimpleNamespace(type_descriptor=SimpleNamespace(annotation=int)), "integer"),
+        (SimpleNamespace(type_descriptor=SimpleNamespace(annotation=float)), "number"),
+        (SimpleNamespace(type_descriptor=SimpleNamespace(annotation=Path)), "path"),
+        (SimpleNamespace(type_descriptor=SimpleNamespace(annotation=str)), "string"),
+        (SimpleNamespace(type_descriptor=SimpleNamespace(annotation=["unhashable"])), "string"),
+        (SimpleNamespace(), "string"),
+    ],
+)
+def test_manifest_names_an_option_type_on_either_side_of_typer_0_29(option, expected):
+    assert _type_name(option) == expected
 
 
 def test_committed_output_schema_is_current():
