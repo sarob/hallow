@@ -16,6 +16,7 @@ from hallow.types import (
     Finding,
     FixAction,
     Location,
+    ModuleInfo,
     RuleId,
     Severity,
 )
@@ -181,6 +182,48 @@ def detect_unused_imports(
     return findings
 
 
+def _star_exported_names(module: ModuleInfo) -> set[str]:
+    """Names `from module import *` binds in the importing module.
+
+    The literal `__all__` when the module has one, otherwise every name bound
+    at module scope that does not start with an underscore. When `__all__` is
+    assigned more than once or mutated, the first literal list is not what
+    star-import exports, so every public name counts then too: a name wrongly
+    taken as exported can only hide a finding, never invent one.
+    """
+    if module.all_list is not None and not module.all_modified:
+        return set(module.all_list)
+    return {name for name in module.bound_names if not name.startswith("_")}
+
+
+def _consumed_by_star_import(graph: ModuleGraph, importer: str, target: str) -> set[str]:
+    """Names of `target` that `importer` consumes through `from target import *`.
+
+    A star import leaves only `*` on the symbol edge, so without this no name
+    of `target` counts as imported. A package `__init__.py` re-exports every
+    name it star-imports: public API, like a name it re-exports one by one.
+    Any other module consumes a name only if it references it, lists it in
+    its own `__all__`, or one of its importers imports the name from it or
+    accesses it as an attribute. A module that is itself star-imported passes
+    the names on further than this follows, so all of them count.
+    """
+    if "*" not in graph.symbols_imported_from(importer, target):
+        return set()
+
+    exported = _star_exported_names(graph.modules[target])
+    module = graph.modules[importer]
+    importers = graph.importers_of(importer)
+    star_imported = any("*" in graph.symbols_imported_from(imp, importer) for imp in importers)
+    if module.is_init or star_imported:
+        return exported
+
+    used = module.referenced_names | set(module.all_list or [])
+    for imp in importers:
+        used.update(graph.symbols_imported_from(imp, importer))
+        used.update(graph.modules[imp].accessed_attributes)
+    return exported & used
+
+
 def detect_unused_exports(
     graph: ModuleGraph,
     config: HallowConfig,
@@ -199,6 +242,7 @@ def detect_unused_exports(
         for target in graph.imports_of(path):
             symbols = graph.symbols_imported_from(path, target)
             imported_symbols[target].update(symbols)
+            imported_symbols[target].update(_consumed_by_star_import(graph, path, target))
 
     for path, module in graph.modules.items():
         if module.is_init or module.is_test or module.is_conftest:
